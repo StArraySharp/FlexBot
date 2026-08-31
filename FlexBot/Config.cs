@@ -10,8 +10,8 @@ static class BotConfig
     public const string Token = "";
 
     public const string ApiKey = "";
-    public const string BaseUrl = "https://api.deepseek.com";
-    public const string Model = "deepseek-v4-flash";
+    public const string BaseUrl = "";
+    public const string Model = "";
     public const long OwnerUin = 3058465749;
     // 记忆/日志/插件数据根目录：默认输出目录（exe 旁）下的 memory/
     public static readonly string MemoryDir = Path.Combine(AppContext.BaseDirectory, "memory");
