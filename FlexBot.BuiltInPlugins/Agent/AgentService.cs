@@ -101,15 +101,18 @@ class AgentService
         catch (Exception ex) { Console.WriteLine($"[agent] 解析 Personas 失败: {ex.Message}"); return ""; }
     }
 
-    // 读单个人格正文：优先 personas/<file>.md；旧格式内联 instructions 存在时迁移落盘后使用
+    // 读单个人格正文：优先 DataDir（WebUI 编辑保存处）→ 回退插件目录 personas/（随插件分发的默认版）
     private string LoadPersonaText(PersonaEntry p)
     {
         var dir = PersonaDir;
         // 新格式：file 指向 md 文件
         if (!string.IsNullOrWhiteSpace(p.File))
         {
-            var path = Path.Combine(dir, Path.GetFileName(p.File.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? p.File : p.File + ".md"));
-            if (File.Exists(path)) return File.ReadAllText(path);
+            var safeName = Path.GetFileName(p.File.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? p.File : p.File + ".md");
+            var dataPath = Path.Combine(dir, safeName);
+            if (File.Exists(dataPath)) return File.ReadAllText(dataPath);
+            var pluginPath = Path.Combine(_ctx.PluginDir, "personas", safeName);
+            if (File.Exists(pluginPath)) return File.ReadAllText(pluginPath);
         }
         // 旧格式：内联 instructions → 写入 md，写回元数据
         if (!string.IsNullOrWhiteSpace(p.Instructions))
