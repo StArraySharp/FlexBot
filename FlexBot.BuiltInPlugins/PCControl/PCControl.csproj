@@ -16,15 +16,12 @@
     <ProjectReference Include="..\..\FlexBot\FlexBot.csproj" ReferenceOutputAssembly="true" ExcludeAssets="runtime" />
     <ProjectReference Include="..\..\FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" Private="false" />
   </ItemGroup>
-  <!-- 宿主已提供的程序集不随插件分发（运行时 PluginLoadContext 回落宿主 ALC 共享）：删副本防膨胀/防版本错乱 -->
+  <!-- 宿主已提供的程序集不随插件分发（运行时 PluginLoadContext 回落宿主 ALC 共享）：删副本防膨胀/防版本错乱。
+       runtimes/ 保留：含 System.Drawing 所需的 RID 特定文件，不可整目录删（Photino 的 native 一并留在其中） -->
   <Target Name="StripHostAssemblies" AfterTargets="Build">
     <ItemGroup>
       <HostDup Include="$(OutDir)FlexBot.dll;$(OutDir)FlexBot.exe;$(OutDir)FlexBot.pdb;$(OutDir)FlexBot.deps.json;$(OutDir)FlexBot.runtimeconfig.json;$(OutDir)OneBotLib.dll;$(OutDir)OneBotLib.pdb;$(OutDir)Photino.NET.dll" />
     </ItemGroup>
     <Delete Files="@(HostDup)" ContinueOnError="true" />
-    <ItemGroup>
-      <PhotinoNative Include="$(OutDir)runtimes\**\Photino.Native.*;$(OutDir)runtimes\**\WebView2Loader.*" />
-      <Delete Files="@(PhotinoNative)" ContinueOnError="true" />
-    </ItemGroup>
   </Target>
 </Project>
