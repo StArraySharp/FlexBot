@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AOnlinePlugin</RootNamespace>
+    <AssemblyName>AOnline</AssemblyName>
+    <OutDir>..\..\FlexBot\bin\$(Configuration)\net10.0\plugins\AOnline\</OutDir>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 契约层（PluginApi 命名空间）已并入宿主，引用宿主项目获得类型 -->
+    <ProjectReference Include="..\..\FlexBot\FlexBot.csproj" ReferenceOutputAssembly="true" Private="false" />
+
+    <ProjectReference Include="..\..\FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" />
+  </ItemGroup>
+
+</Project>

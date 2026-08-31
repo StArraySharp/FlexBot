@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FlexBot 控制台</title>
+<link rel="stylesheet" href="/app.css?v=32">
+</head>
+<body>
+<div id="bgLayer"></div>
+<div id="app">
+  <!-- ===== 侧边导航 ===== -->
+  <aside id="nav">
+    <div class="brand">
+      <div class="logo">FB</div>
+      <div class="tt"><div class="t1">FlexBot</div><div class="t2">插件化机器人</div></div>
+    </div>
+    <div class="navitem active" data-page="dash">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 5h6v6H5zM13 5h6v4h-6zM13 11h6v8h-6zM5 13h6v6H5z" rx="2"/></svg><span>概览</span>
+    </div>
+    <div class="navitem" data-page="plugins">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 3a2.5 2.5 0 0 1 2.5 2.5V7h3A1.5 1.5 0 0 1 17 8.5V11h1.5a2.5 2.5 0 1 1 0 5H17v2.5A1.5 1.5 0 0 1 15.5 20h-3v-1.5a2.5 2.5 0 1 0-5 0V20h-3A1.5 1.5 0 0 1 3 18.5v-3h1.5a2.5 2.5 0 1 0 0-5H3v-3A1.5 1.5 0 0 1 4.5 5.5h3V5.5A2.5 2.5 0 0 1 10 3z"/></svg><span>插件</span>
+    </div>
+    <div class="navitem" data-page="config">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9.4 4c0-.5 0-1-.1-1.5l2.1-1.6-2-3.5-2.5 1a7.7 7.7 0 0 0-2.6-1.5L15.9 2h-4l-.4 2.9c-.9.3-1.8.8-2.6 1.5l-2.5-1-2 3.5 2.1 1.6a8.6 8.6 0 0 0 0 3L4.4 15l2 3.5 2.5-1c.8.7 1.7 1.2 2.6 1.5l.4 3h4l.4-3a7.7 7.7 0 0 0 2.6-1.5l2.5 1 2-3.5-2.1-1.6c.1-.5.1-1 .1-1.5z" transform="scale(.92) translate(1 1)"/></svg><span>配置</span>
+    </div>
+    <div class="navitem" data-page="logs">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm2 4v1.6l3 2.4-3 2.4V17l5-4-5-4zm6 8h8v-1.5h-8V17z"/></svg><span>日志</span>
+    </div>
+    <div class="navitem" id="navTheme" title="切换主题（跟随系统/浅色/深色）">
+      <svg viewBox="0 0 24 24" fill="currentColor" id="themeIco"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg><span id="themeTxt">主题</span>
+    </div>
+    <div class="navitem" id="navLogout" title="退出登录" style="color:var(--error)">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8v-2H4V5z"/></svg><span>退出</span>
+    </div>
+    <div class="foot">FlexBot v2 · Material You</div>
+  </aside>
+
+  <!-- ===== 主区 ===== -->
+  <div id="main">
+    <div id="topbar">
+      <div id="topLogo">FB</div>
+      <div class="tcol">
+        <h1 id="pageTitle">概览</h1>
+        <span class="sub" id="pageSub">运行状态一览</span>
+      </div>
+      <span class="spacer"></span>
+      <span class="chip" id="stChip"><span class="led"></span><span id="stChipTxt">连接中…</span></span>
+    </div>
+
+    <div id="pages">
+      <!-- 概览 -->
+      <section class="page show" id="page-dash">
+        <div class="statgrid">
+          <div class="stat"><div class="k">连接状态</div><div class="v" id="dConn">…</div><div class="k" id="dWs">…</div></div>
+          <div class="stat"><div class="k">机器人账号</div><div class="v" id="dSelf">…</div><div class="k">OneBot 协议</div></div>
+          <div class="stat"><div class="k">运行时长</div><div class="v" id="dUp">…</div><div class="k" id="dStart">…</div></div>
+          <div class="stat"><div class="k">已加载插件</div><div class="v" id="dPlug">…</div><div class="k">plugins/ 目录</div></div>
+        </div>
+        <div class="card">
+          <h3>快捷命令</h3>
+          <div class="desc">直接执行宿主命令（!plugin list / !plugin reload Chat …）</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <div class="tf" style="flex:1;min-width:260px"><input id="dCmd" placeholder=" " autocomplete="off"><label>输入命令…</label></div>
+            <button class="btn filled" id="dSend">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 20.5 22 12 3 3.5 3 10l12 2-12 2z"/></svg>执行
+            </button>
+            <button class="btn tonal" data-cmd="!plugin list">插件列表</button>
+            <button class="btn tonal" data-cmd="!plugin reload Chat">重载 Chat</button>
+          </div>
+          <div id="dCmdOut" class="minilog" style="margin-top:12px;display:none"></div>
+        </div>
+        <div class="card">
+          <h3>最近日志</h3>
+          <div class="desc">最近事件流 · <a href="#" id="gotoLogs" style="color:var(--primary);text-decoration:none">查看全部 →</a></div>
+          <div class="minilog" id="miniLog"></div>
+        </div>
+      </section>
+
+      <!-- 插件 -->
+      <section class="page" id="page-plugins">
+        <div class="pagetools">
+          <span class="chip" id="plugCount">…</span>
+          <span style="flex:1"></span>
+          <button class="btn tonal small" id="reloadAll">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>重载全部
+          </button>
+        </div>
+        <div class="pluggrid" id="plugGrid"></div>
+      </section>
+
+      <!-- 配置 -->
+      <section class="page" id="page-config">
+        <div id="cfgSaveBar">
+          <label class="switch"><input type="checkbox" id="cfgReload"><span class="track"><span class="thumb"></span></span>保存后重载已加载插件</label>
+          <button class="btn filled" id="cfgSave">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h11l3 3v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm3 4v2h8V7H8zm0 4v2h8v-2H8z"/></svg>保存配置
+          </button>
+          <span id="cfgMsg"></span>
+        </div>
+        <div class="cfggrid">
+          <div class="card">
+            <h3><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8V2zm7 0v3h3v2h-3v3h-2V7h-3V5h3V2h2z"/></svg>连接 · OneBot / NapCat</h3>
+            <div class="desc">保存后若地址或令牌变更将自动重连</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="tf"><input id="cfgWs" placeholder=" "><label>WebSocket 地址</label></div>
+              <div class="tf"><input id="cfgToken" placeholder=" " type="password"><label>访问令牌（可空）</label></div>
+            </div>
+          </div>
+          <div class="card">
+            <h3><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0 10c4.4 0 8 1.8 8 4v2H4v-2c0-2.2 3.6-4 8-4z"/></svg>通用</h3>
+            <div class="desc">主人与管理员（主人拥有最高权限）；模型/人格/命令前缀等在对应插件的「设置」里</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="tf"><input id="cfgOwner" type="number" placeholder=" "><label>主人 QQ（拥有全部权限）</label></div>
+              <div class="tf"><textarea id="cfgAdmins" rows="3" placeholder=" "></textarea><label>额外管理员 QQ（每行一个；可空）</label></div>
+              <div class="tf"><input id="cfgMem" placeholder=" "><label>数据目录（memory）</label></div>
+            </div>
+          </div>
+          <div class="card">
+            <h3><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>启动命令</h3>
+            <div class="desc">一键启动 NapCat 和 LLBot；NapCat/LLBot 日志隔离到独立文件</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="tf"><input id="cfgNapCatCmd" placeholder=" "><label>NapCat 启动命令（.bat/.sh 路径）</label></div>
+              <div class="tf"><input id="cfgLLBotCmd" placeholder=" "><label>LLBot 启动命令</label></div>
+              <div class="tf"><input id="cfgLogDir" placeholder=" "><label>日志目录</label></div>
+              <label class="switch"><input type="checkbox" id="cfgIsolateLogs" checked><span class="track"><span class="thumb"></span></span>隔离依赖日志</label>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:4px">
+              <button class="btn filled" id="btnConnectNow">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8V2zm7 0v3h3v2h-3v3h-2V7h-3V5h3V2h2z"/></svg>立即启动并连接
+              </button>
+              <span id="connectMsg" style="font-size:12.5px;color:var(--on-surface-var);align-self:center"></span>
+            </div>
+          </div>
+          <div class="card">
+            <h3><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 19l-7-7 1.4-1.4L11 15.2V4h2v11.2l4.6-4.6L19 12l-7 7zM5 21h14v-2H5v2z"/></svg>外观</h3>
+            <div class="desc">自定义背景图与透明度；设置对所有访问者（含登录页）生效</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div>
+                <div class="field-label" style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--on-surface-var);margin-bottom:6px">背景图（jpg/png/webp ≤15MB）</div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap">
+                  <input type="file" id="bgFile" accept=".jpg,.jpeg,.png,.webp" style="display:none">
+                  <button class="btn tonal small" id="bgUpload" type="button">上传背景</button>
+                  <button class="btn ghost small" id="bgRemove" type="button">移除背景</button>
+                  <span id="bgMsg" style="font-size:12px;color:var(--on-surface-var);align-self:center"></span>
+                </div>
+              </div>
+              <div>
+                <div class="field-label" style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--on-surface-var);margin-bottom:4px">
+                  <span>UI 不透明度</span><span id="uiOpVal"></span>
+                </div>
+                <input type="range" id="uiOpacity" min="0" max="100" step="5" style="width:100%">
+              </div>
+              <div>
+                <div class="field-label" style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--on-surface-var);margin-bottom:4px">
+                  <span>控件不透明度（按钮/输入框/滑条）</span><span id="ctlOpVal"></span>
+                </div>
+                <input type="range" id="ctlOpacity" min="0" max="100" step="5" style="width:100%">
+              </div>
+              <div>
+                <div class="field-label" style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--on-surface-var);margin-bottom:4px">
+                  <span>背景不透明度</span><span id="bgOpVal"></span>
+                </div>
+                <input type="range" id="bgOpacity" min="0" max="100" step="5" style="width:100%">
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <h3><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm0-13a1 1 0 0 0-1 1v4a1 1 0 0 0 2 0V8a1 1 0 0 0-1-1zm0 9a1 1 0 1 0 1 1 1 1 0 0 0-1-1z"/></svg>WebUI 端口</h3>
+            <div class="desc">端口与访问控制；公网暴露必须设密码</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="tf"><input id="cfgWebUiPort" type="number" placeholder="0" min="0" max="65535"><label>WebUI 端口（0=自动，重启生效）</label></div>
+              <div class="tf"><input id="cfgWebUiPwd" type="password" placeholder=" "><label>登录密码（留空不改；- 清除）</label></div>
+              <label class="switch"><input type="checkbox" id="cfgBindAll"><span class="track"><span class="thumb"></span></span>公网可访问（0.0.0.0，重启生效）</label>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 日志 -->
+      <section class="page" id="page-logs">
+        <div id="logtools">
+          <div class="tf"><input id="logFilter" placeholder=" "><label>过滤关键字…</label></div>
+          <label class="switch"><input type="checkbox" id="autoscroll" checked><span class="track"><span class="thumb"></span></span>自动滚动</label>
+          <label class="switch"><input type="checkbox" id="pauseLog"><span class="track"><span class="thumb"></span></span>暂停</label>
+          <span style="flex:1"></span>
+          <span class="chip" id="logCount">0 行</span>
+          <button class="btn tonal small" id="clearLog">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 3h6l1 2h4v2H4V5h4l1-2zM6 9h12l-1 12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 9z"/></svg>清空
+          </button>
+        </div>
+        <div id="log"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- 插件设置弹窗 -->
+<div id="psetOverlay" class="overlay hidden">
+  <div class="modal">
+    <div class="mhead">
+      <span id="psetName">插件设置</span><span class="sub" id="psetSub"></span>
+      <button class="x" id="psetClose">×</button>
+    </div>
+    <div class="mbody">
+      <div id="psetForm"></div>
+      <div id="psetEmpty" class="mempty" style="display:none">该插件暂无可配置项。<br><span style="font-size:12px">（未加载的插件需先加载；无设置项的插件不显示表单）</span></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn tonal" id="psetCancel">取消</button>
+      <button class="btn filled" id="psetSave">保存并热应用</button>
+      <span id="psetMsg"></span>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js?v=32"></script>
+</body>
+</html>

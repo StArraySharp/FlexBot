@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>FlexBot</RootNamespace>
+    <AssemblyName>FlexBot</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Photino.NET" Version="4.0.16" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 契约层已并入：PluginApi/ 源码随宿主编译（命名空间不变，插件按程序集名共享） -->
+    <ProjectReference Include="..\FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="WebUi\index.html" LogicalName="index.html" />
+    <EmbeddedResource Include="WebUi\login.html" LogicalName="login.html" />
+    <!-- 前端模块：与 WebUi.UiAssets 清单一一对应（显式列出，避免通配符 RecursiveDir 命名差异） -->
+    <EmbeddedResource Include="WebUi\js\nav.js" LogicalName="js/nav.js" />
+    <EmbeddedResource Include="WebUi\js\logs.js" LogicalName="js/logs.js" />
+    <EmbeddedResource Include="WebUi\js\status.js" LogicalName="js/status.js" />
+    <EmbeddedResource Include="WebUi\js\plugins.js" LogicalName="js/plugins.js" />
+    <EmbeddedResource Include="WebUi\js\config.js" LogicalName="js/config.js" />
+    <EmbeddedResource Include="WebUi\js\appearance.js" LogicalName="js/appearance.js" />
+    <EmbeddedResource Include="WebUi\js\auth.js" LogicalName="js/auth.js" />
+    <EmbeddedResource Include="WebUi\js\quickcmd.js" LogicalName="js/quickcmd.js" />
+    <EmbeddedResource Include="WebUi\js\main.js" LogicalName="js/main.js" />
+    <EmbeddedResource Include="WebUi\css\base.css" LogicalName="css/base.css" />
+    <EmbeddedResource Include="WebUi\css\nav.css" LogicalName="css/nav.css" />
+    <EmbeddedResource Include="WebUi\css\components.css" LogicalName="css/components.css" />
+    <EmbeddedResource Include="WebUi\css\pages.css" LogicalName="css/pages.css" />
+    <EmbeddedResource Include="WebUi\css\mobile.css" LogicalName="css/mobile.css" />
+  </ItemGroup>
+
+</Project>

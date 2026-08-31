@@ -1,0 +1,13 @@
+<Solution>
+  <Project Path="FlexBot\FlexBot.csproj" />
+  <Project Path="FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" />
+  <Folder Name="/FlexBot.BuiltInPlugins/">
+    <Project Path="FlexBot.BuiltInPlugins\Admin\Admin.csproj" />
+    <Project Path="FlexBot.BuiltInPlugins\Agent\Agent.csproj" />
+    <Project Path="FlexBot.BuiltInPlugins\AOnline\AOnline.csproj" />
+    <Project Path="FlexBot.BuiltInPlugins\FileSystem\FileSystem.csproj" />
+    <Project Path="FlexBot.BuiltInPlugins\PCControl\PCControl.csproj" />
+    <Project Path="FlexBot.BuiltInPlugins\PluginApi\PluginApi.csproj" />
+    <Project Path="FlexBot.BuiltInPlugins\PluginBuilder\PluginBuilder.csproj" />
+  </Folder>
+</Solution>

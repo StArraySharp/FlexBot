@@ -1,0 +1,152 @@
+/* ============ 通用组件 ============ */
+.card, .stat, .pcard { animation: cardIn .38s cubic-bezier(.2,.8,.3,1) backwards; }
+.stat:nth-child(1) { animation-delay: .03s; } .stat:nth-child(2) { animation-delay: .08s; }
+.stat:nth-child(3) { animation-delay: .13s; } .stat:nth-child(4) { animation-delay: .18s; }
+.pcard:nth-child(2) { animation-delay: .04s; } .pcard:nth-child(3) { animation-delay: .08s; }
+.pcard:nth-child(4) { animation-delay: .12s; } .pcard:nth-child(5) { animation-delay: .16s; }
+.pcard:nth-child(6) { animation-delay: .20s; } .pcard:nth-child(7) { animation-delay: .24s; }
+@keyframes cardIn { from { opacity: 0; transform: translateY(10px) scale(.99); } to { opacity: 1; transform: none; } }
+.card {
+  background: color-mix(in srgb, var(--surface-c-low) calc(var(--ui-opacity) * 100%), transparent);
+  backdrop-filter: blur(var(--ui-blur, 10px));
+  border-radius: var(--r-l);
+  padding: 20px 22px; margin-bottom: 16px;
+}
+.card h3 {
+  font-size: 15px; font-weight: 600; margin-bottom: 4px;
+  display: flex; align-items: center; gap: 10px;
+}
+.card { transition: transform .2s cubic-bezier(.2,.8,.3,1), box-shadow .2s, background-color .25s ease, backdrop-filter .25s ease; }
+.card:hover { transform: translateY(-2px); box-shadow: 0 6px 22px rgba(0,0,0,.22); }
+.card h3 svg { width: 19px; height: 19px; color: var(--primary); }
+.card .desc { color: var(--on-surface-var); font-size: 12.5px; margin-bottom: 14px; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 38px; padding: 0 20px; border-radius: 999px; border: none;
+  font-size: 13.5px; font-weight: 600; cursor: pointer; user-select: none;
+  background: color-mix(in srgb, var(--surface-c-highest) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-surface);
+  transition: filter .15s, box-shadow .15s;
+}
+.btn svg { width: 17px; height: 17px; }
+.btn { transition: filter .15s, box-shadow .15s, transform .15s cubic-bezier(.2,.8,.3,1); }
+.btn:hover { filter: brightness(1.12); transform: translateY(-1px); }
+.btn:active { transform: translateY(0) scale(.97); }
+.btn:active { filter: brightness(.92); }
+.btn.disabled, .btn:disabled { opacity: .35; cursor: default; }
+.btn.filled { background: color-mix(in srgb, var(--primary) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-primary); }
+.btn.tonal { background: color-mix(in srgb, var(--secondary-container) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-secondary-container); }
+.btn.err-tonal { background: color-mix(in srgb, var(--error-container) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-error-container); }
+.btn.ghost { background: transparent; border: 1px solid color-mix(in srgb, var(--outline-var) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-surface-var); }
+.btn.ghost:hover { border-color: var(--primary); color: var(--primary); }
+.btn.small { height: 32px; padding: 0 14px; font-size: 12.5px; }
+.btn.circle { width: 38px; padding: 0; border-radius: 50%; }
+
+/* M3 下拉选择 */
+.mselect {
+  width: 100%; background: color-mix(in srgb, var(--surface-c-highest) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-surface);
+  border: 1px solid var(--outline-var); border-radius: var(--r-xs);
+  padding: 12px 14px; font: inherit; font-size: 13.5px; outline: none; cursor: pointer;
+}
+.mselect:focus { border-color: var(--primary); }
+
+/* M3 文本框（填充风格） */
+.tf { position: relative; }
+.tf input, .tf textarea {
+  width: 100%; background: color-mix(in srgb, var(--surface-c-highest) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-surface);
+  border: 1px solid transparent; border-bottom: 1px solid var(--outline-var);
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
+  padding: 14px 14px 10px; font: inherit; font-size: 13.5px; outline: none;
+  transition: border-color .15s, background .15s;
+}
+.tf textarea { resize: vertical; border-radius: var(--r-xs); padding: 12px 14px; font: 12.5px/1.6 Consolas, monospace; }
+.tf input:focus, .tf textarea:focus { border-bottom: 2px solid var(--primary); background: color-mix(in srgb, var(--surface-c) calc(var(--ctl-opacity) * 100%), transparent); }
+.tf label {
+  position: absolute; left: 14px; top: 11px; font-size: 13px; color: var(--on-surface-var);
+  pointer-events: none; transition: all .12s;
+}
+/* 浮起态：完全脱出输入框上沿，z-index 高于输入框，带卡片底色防止与值/占位文字交叠 */
+.tf input:focus + label, .tf input:not(:placeholder-shown) + label,
+.tf textarea:focus + label, .tf textarea:not(:placeholder-shown) + label {
+  top: -13px; left: 10px; font-size: 11px; padding: 0 6px; z-index: 2;
+  background: color-mix(in srgb, var(--surface-c-low) calc(var(--ctl-opacity) * 100%), transparent); border-radius: 4px;
+  color: var(--primary); font-weight: 600;
+}
+/* 有值/聚焦时输入框文字下移一点，避免与浮起 label 视觉贴近 */
+.tf input:not(:placeholder-shown), .tf textarea:not(:placeholder-shown),
+.tf input:focus, .tf textarea:focus {
+  padding-top: 17px;
+}
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field .psetdesc { margin: 0; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+
+/* M3 开关 */
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; font-size: 13.5px; }
+.switch input { display: none; }
+.switch .track {
+  width: 48px; height: 28px; border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-c-highest) calc(var(--ctl-opacity) * 100%), transparent);
+  border: 2px solid var(--outline); position: relative; transition: all .18s; flex: none;
+}
+.switch .thumb {
+  position: absolute; top: 50%; left: 5px; transform: translateY(-50%);
+  width: 14px; height: 14px; border-radius: 50%; background: var(--outline); transition: all .18s;
+}
+.switch input:checked + .track {
+  background: color-mix(in srgb, var(--primary) calc(var(--ctl-opacity) * 100%), transparent);
+  border-color: color-mix(in srgb, var(--primary) calc(var(--ctl-opacity) * 100%), transparent);
+}
+.switch input:checked + .track .thumb {
+  left: 23px; width: 20px; height: 20px; background: var(--on-primary);
+}
+
+/* ============ 弹窗（插件设置） ============ */
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center; z-index: 10;
+  animation: fadeIn .2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.overlay.hidden { display: none; }
+.modal {
+  animation: modalIn .28s cubic-bezier(.2,.9,.3,1.15);
+  width: min(560px, 94vw); max-height: 86vh;
+  background: color-mix(in srgb, var(--surface-c-low) calc(var(--ui-opacity) * 100%), transparent);
+  border-radius: var(--r-xl);
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0,0,0,.5);
+}
+@keyframes modalIn { from { opacity: 0; transform: translateY(24px) scale(.94); } to { opacity: 1; transform: none; } }
+.mhead {
+  display: flex; align-items: center; gap: 12px; padding: 18px 24px 12px;
+  font-size: 17px; font-weight: 600; flex: none;
+}
+.mhead .sub { font-size: 12px; color: var(--on-surface-var); font-weight: 400; }
+.mhead .x {
+  margin-left: auto; background: none; border: none; color: var(--on-surface-var);
+  font-size: 20px; cursor: pointer; padding: 2px 8px; border-radius: 50%;
+}
+.mhead .x:hover { background: var(--surface-c-highest); color: var(--error); }
+.mbody { overflow-y: auto; padding: 4px 24px 16px; }
+.psetrow { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.psetlbl { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+.psetdesc { font-size: 12px; color: var(--on-surface-var); }
+.mempty { color: var(--on-surface-var); font-size: 13px; text-align: center; padding: 28px 0; }
+.mfoot {
+  display: flex; align-items: center; gap: 10px; padding: 14px 24px 18px;
+  border-top: 1px solid var(--outline-var); flex: none;
+}
+#psetMsg { margin-left: auto; color: var(--on-surface-var); font-size: 12.5px; max-width: 45%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ============ Snackbar ============ */
+#toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 80px);
+  background: color-mix(in srgb, var(--surface-c-highest) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-surface);
+  padding: 12px 22px; border-radius: var(--r-s); font-size: 13.5px;
+  box-shadow: var(--shadow); transition: transform .25s, visibility .25s; z-index: 99; max-width: 80vw;
+  /* 隐藏态不占命中区：防下移偏移后盖住底栏/遮挡点击 */
+  visibility: hidden; pointer-events: none;
+}
+#toast.show { transform: translate(-50%, 0); visibility: visible; }

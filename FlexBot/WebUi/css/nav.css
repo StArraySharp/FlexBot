@@ -1,0 +1,27 @@
+/* ============ 侧边导航 ============ */
+#nav {
+  width: var(--nav-w); flex: none; display: flex; flex-direction: column;
+  background: color-mix(in srgb, var(--surface-c-low) calc(var(--ui-opacity) * 100%), transparent);
+  backdrop-filter: blur(var(--ui-blur, 10px));
+  padding: 18px 12px;
+}
+.brand { display: flex; align-items: center; gap: 12px; padding: 6px 12px 20px; }
+.brand .logo {
+  width: 42px; height: 42px; border-radius: 14px; flex: none;
+  background: color-mix(in srgb, var(--primary-container) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-primary-container);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 17px;
+}
+.brand .t1 { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+.brand .t2 { font-size: 11px; color: var(--on-surface-var); }
+.navitem {
+  display: flex; align-items: center; gap: 14px;
+  padding: 11px 16px; margin: 2px 0; border-radius: 999px;
+  color: var(--on-surface-var); cursor: pointer; user-select: none;
+  font-size: 14px; font-weight: 500; position: relative;
+  transition: background .15s, color .15s;
+}
+.navitem:hover { background: color-mix(in srgb, var(--surface-c-high) calc(var(--ctl-opacity) * 100%), transparent); }
+.navitem.active { background: color-mix(in srgb, var(--secondary-container) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-secondary-container); font-weight: 600; }
+.navitem svg { width: 22px; height: 22px; flex: none; }
+#nav .foot { margin-top: auto; padding: 12px; color: var(--on-surface-var); font-size: 11px; opacity: .7; }

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>登录 · FlexBot</title>
+<link rel="stylesheet" href="/app.css?v=32">
+<script>try{const m=localStorage.getItem('qqbot_theme');if(m==='light'||m==='dark')document.documentElement.dataset.theme=m;}catch(e){}</script>
+<style>
+  body {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; min-height: 100dvh;
+    background:
+      radial-gradient(1100px 500px at 15% -10%, rgba(173,198,255,.08), transparent 60%),
+      radial-gradient(900px 500px at 110% 110%, rgba(222,188,223,.05), transparent 60%),
+      var(--surface);
+    overflow: auto;
+  }
+  .login-card {
+    position: relative;
+    width: min(420px, 92vw);
+    background: color-mix(in srgb, var(--surface-c-low) calc(var(--ui-opacity) * 100%), transparent);
+    backdrop-filter: blur(var(--ui-blur, 12px));
+    border-radius: var(--r-xl);
+    padding: 40px 36px 30px;
+    box-shadow: 0 16px 48px rgba(0,0,0,.5), inset 0 1px 0 rgba(230,224,233,.04);
+    overflow: hidden;
+  }
+  .blob { position: absolute; border-radius: 50%; pointer-events: none; opacity: .09; background: var(--primary); }
+  .blob.b1 { width: 220px; height: 220px; right: -80px; top: -80px; }
+  .blob.b2 { width: 140px; height: 140px; left: -50px; bottom: -50px; background: var(--tertiary); opacity: .07; }
+
+  .login-head { display: flex; align-items: center; gap: 16px; margin-bottom: 26px; }
+  .login-logo {
+    width: 56px; height: 56px; border-radius: 18px; flex: none;
+    background: var(--primary-container); color: var(--on-primary-container);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 22px;
+    box-shadow: 0 4px 14px rgba(79,55,139,.45);
+  }
+  .login-tt .t1 { font-size: 19px; font-weight: 600; letter-spacing: .2px; }
+  .login-tt .t2 { font-size: 12px; color: var(--on-surface-var); margin-top: 2px; }
+
+  .field-label { font-size: 12.5px; color: var(--on-surface-var); margin: 4px 0 8px; display: flex; align-items: center; gap: 6px; }
+  .field-label svg { width: 15px; height: 15px; color: var(--primary); }
+
+  /* M3 填充输入框：顶部固定小标签 + 输入区，无重叠 */
+  .m3-field { position: relative; margin-bottom: 6px; }
+  .m3-field input {
+    width: 100%; height: 54px; padding: 18px 48px 6px 16px;
+    background: color-mix(in srgb, var(--surface-c-highest) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-surface);
+    border: 1px solid transparent; border-bottom: 1px solid var(--outline-var);
+    border-radius: var(--r-xs) var(--r-xs) 0 0;
+    font: inherit; font-size: 16px; letter-spacing: .3px; outline: none;
+    transition: border-color .15s, background .15s;
+  }
+  .m3-field input:focus { border-bottom: 2px solid var(--primary); background: color-mix(in srgb, var(--surface-c) calc(var(--ctl-opacity) * 100%), transparent); }
+  .m3-field .toplabel {
+    position: absolute; left: 16px; top: 7px;
+    font-size: 11px; color: var(--on-surface-var); pointer-events: none;
+  }
+  .m3-field .eye {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    width: 40px; height: 40px; border: 0; border-radius: 50%;
+    background: transparent; color: var(--on-surface-var); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .m3-field .eye:hover { background: var(--surface-c-high); color: var(--on-surface); }
+  .m3-field .eye svg { width: 20px; height: 20px; }
+
+  .login-opts {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 16px 0 4px; min-height: 34px;
+  }
+  .login-err { color: var(--error); font-size: 12.5px; text-align: center; min-height: 19px; margin-top: 6px; }
+  .login-card .btn { width: 100%; height: 48px; font-size: 15px; margin-top: 12px; letter-spacing: 4px; }
+  .login-foot { margin-top: 22px; text-align: center; color: var(--on-surface-var); font-size: 11px; opacity: .65; }
+
+  @media (max-width: 480px) {
+    .login-card { padding: 30px 22px 22px; }
+  }
+</style>
+</head>
+<body>
+<div id="bgLayer"></div>
+  <div class="login-card">
+    <span class="blob b1"></span><span class="blob b2"></span>
+    <div class="login-head">
+      <div class="login-logo">FB</div>
+      <div class="login-tt">
+        <div class="t1">FlexBot 控制台</div>
+        <div class="t2">请验证身份后继续</div>
+      </div>
+    </div>
+
+    <form id="loginForm">
+      <div class="field-label">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6a5 5 0 0 0-10 0v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zM9 6a3 3 0 0 1 6 0v2H9V6zm4 9.72V18h-2v-2.28a2 2 0 1 1 2 0z"/></svg>
+        访问密码
+      </div>
+      <div class="m3-field">
+        <span class="toplabel">密码</span>
+        <input type="password" id="pwd" autocomplete="current-password" required>
+        <button type="button" class="eye" id="eyeBtn" title="显示/隐藏">
+          <svg id="eyeIco" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5c-5 0-9.3 3.1-11 7.5C2.7 16.9 7 20 12 20s9.3-3.1 11-7.5C21.3 8.1 17 5 12 5zm0 12.5A5 5 0 1 1 12 7a5 5 0 0 1 0 10.5zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
+        </button>
+      </div>
+
+      <div class="login-opts">
+        <label class="switch">
+          <input type="checkbox" id="remember" checked>
+          <span class="track"><span class="thumb"></span></span>记住密码
+        </label>
+        <span style="font-size:11.5px;color:var(--on-surface-var)">存于本浏览器</span>
+      </div>
+
+      <div class="login-err" id="err"></div>
+      <button type="submit" class="btn filled" id="btnLogin">登录</button>
+    </form>
+    <div class="login-foot">FlexBot · 仅限授权访问 · <a href="#" id="themeTgl" style="color:var(--primary);text-decoration:none" onclick="
+      (function(){
+        const cur=localStorage.getItem('qqbot_theme')||'';
+        const next=cur===''?'light':cur==='light'?'dark':'';
+        if(next==='light'||next==='dark')document.documentElement.dataset.theme=next;
+        else delete document.documentElement.dataset.theme;
+        localStorage.setItem('qqbot_theme',next);
+        document.getElementById('themeTgl').textContent = next===''?'跟随系统':next==='light'?'浅色':'深色';
+        return false;
+      })()">跟随系统</a></div>
+  </div>
+
+<script>
+const $ = id => document.getElementById(id);
+const PWD_KEY = 'qqbot_saved_pwd';
+// 外观设置（背景/透明度）对所有访问者（含登录页）生效
+fetch('/api/theme-cfg').then(r => r.json()).then(c => {
+  if (!c) return;
+  document.documentElement.style.setProperty('--ui-opacity', (c.uiOpacity ?? 100) / 100);
+  document.documentElement.style.setProperty('--ui-blur', ((c.uiOpacity ?? 100) * 0.1).toFixed(2) + 'px');
+  document.documentElement.style.setProperty('--ctl-opacity', (c.ctlOpacity ?? 100) / 100);
+  document.documentElement.style.setProperty('--bg-opacity', (c.bgOpacity ?? 45) / 100);
+  if (c.hasBackground) document.documentElement.style.setProperty('--custom-bg', 'url(/background?' + Date.now() + ')');
+}).catch(() => {});
+
+const saved = localStorage.getItem(PWD_KEY);
+if (saved) { $('pwd').value = saved; $('remember').checked = true; }
+
+$('eyeBtn').onclick = () => {
+  const inp = $('pwd');
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  $('eyeIco').innerHTML = show
+    ? '<path d="M12 6.5c-4.2 0-7.9 2.6-9.3 6.5 1.4 3.9 5.1 6.5 9.3 6.5s7.9-2.6 9.3-6.5C19.9 9.1 16.2 6.5 12 6.5zm0 10.5a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-6.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/><path d="M3.4 20.4 2 19 20.6 2.6 22 4 3.4 20.4z"/>'
+    : '<path d="M12 5c-5 0-9.3 3.1-11 7.5C2.7 16.9 7 20 12 20s9.3-3.1 11-7.5C21.3 8.1 17 5 12 5zm0 12.5A5 5 0 1 1 12 7a5 5 0 0 1 0 10.5zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/>';
+};
+
+$('loginForm').onsubmit = async e => {
+  e.preventDefault();
+  const pwd = $('pwd').value;
+  const remember = $('remember').checked;
+  $('err').textContent = '';
+  $('btnLogin').disabled = true;
+  $('btnLogin').textContent = '验证中…';
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd, remember: true })
+    }).then(r => r.json());
+    if (!r.ok) { $('err').textContent = r.error || '登录失败'; return; }
+    if (remember) localStorage.setItem(PWD_KEY, pwd);
+    else localStorage.removeItem(PWD_KEY);
+    location.href = '/';
+  } catch (ex) {
+    $('err').textContent = '请求失败: ' + ex;
+  } finally {
+    $('btnLogin').disabled = false;
+    $('btnLogin').textContent = '登录';
+  }
+};
+</script>
+</body>
+</html>

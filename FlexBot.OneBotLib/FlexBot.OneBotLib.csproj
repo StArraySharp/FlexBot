@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>OneBotLib</AssemblyName>
+    <RootNamespace>OneBotLib</RootNamespace>
+    
+    <!-- NuGet Package Info -->
+    <PackageId>OneBotLib</PackageId>
+    <Version>1.0.5</Version>
+    <Authors>XSY-HYH</Authors>
+    <Description>A C# library that fully implements the OneBot 11 protocol, supporting WebSocket communication with OneBot implementations.</Description>
+    <PackageTags>onebot;onebot11;qq;bot;websocket;chatbot</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/XSY-HYH/OneBotLib</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/XSY-HYH/OneBotLib</PackageProjectUrl>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>

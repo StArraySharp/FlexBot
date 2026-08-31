@@ -1,0 +1,138 @@
+/* ============ Material 3 主题 · AJIDE colors.xml（seed #448AFF 蓝） ============ */
+/* 默认：暗色模式（md_theme_dark_*） */
+:root {
+  --primary: #ADC6FF; --on-primary: #002E6A; --primary-container: #004495; --on-primary-container: #D8E2FF;
+  --secondary: #BFC6DC; --on-secondary: #293041; --secondary-container: #3F4759; --on-secondary-container: #DBE2F9;
+  --tertiary: #DEBCDF; --tertiary-container: #583E5B;
+  --error: #FFB4AB; --on-error: #690005; --error-container: #93000A; --on-error-container: #FFDAD6;
+  --success: #9CD694; --success-container: #1E4620;
+  --warn: #F2CC8C; --warn-container: #5C4400;
+  --surface: #1B1B1F; --surface-dim: #1B1B1F;
+  --surface-c-low: #1E1E22; --surface-c: #232328; --surface-c-high: #2B2B30; --surface-c-highest: #36363C;
+  --on-surface: #E3E2E6; --on-surface-var: #C4C6D0;
+  --outline: #8E9099; --outline-var: #44474F;
+  --shadow: 0 4px 16px rgba(0,0,0,.4);
+  --r-xs: 8px; --r-s: 12px; --r-m: 16px; --r-l: 20px; --r-xl: 28px;
+  --nav-w: 232px;
+}
+/* 亮色模式：手动 data-theme 优先，其次跟随系统（md_theme_light_*） */
+html[data-theme="light"] {
+  --primary: #005AC2; --on-primary: #FFFFFF; --primary-container: #D8E2FF; --on-primary-container: #001A42;
+  --secondary: #575E71; --on-secondary: #FFFFFF; --secondary-container: #DBE2F9; --on-secondary-container: #141B2C;
+  --tertiary: #715573; --tertiary-container: #FBD7FC;
+  --error: #BA1A1A; --on-error: #FFFFFF; --error-container: #FFDAD6; --on-error-container: #410002;
+  --success: #2E7D32; --success-container: #D8F5D8;
+  --warn: #B26A00; --warn-container: #FFECB3;
+  --surface: #FEFBFF; --surface-dim: #FEFBFF;
+  --surface-c-low: #F3F2F7; --surface-c: #ECECF1; --surface-c-high: #E1E2EC; --surface-c-highest: #D5D6E0;
+  --on-surface: #1B1B1F; --on-surface-var: #44474F;
+  --outline: #75777F; --outline-var: #C4C6D0;
+  --shadow: 0 4px 16px rgba(0,0,0,.12);
+}
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]) {
+    --primary: #005AC2; --on-primary: #FFFFFF; --primary-container: #D8E2FF; --on-primary-container: #001A42;
+    --secondary: #575E71; --on-secondary: #FFFFFF; --secondary-container: #DBE2F9; --on-secondary-container: #141B2C;
+    --tertiary: #715573; --tertiary-container: #FBD7FC;
+    --error: #BA1A1A; --on-error: #FFFFFF; --error-container: #FFDAD6; --on-error-container: #410002;
+    --success: #2E7D32; --success-container: #D8F5D8;
+    --warn: #B26A00; --warn-container: #FFECB3;
+    --surface: #FEFBFF; --surface-dim: #FEFBFF;
+    --surface-c-low: #F3F2F7; --surface-c: #ECECF1; --surface-c-high: #E1E2EC; --surface-c-highest: #D5D6E0;
+    --on-surface: #1B1B1F; --on-surface-var: #44474F;
+    --outline: #75777F; --outline-var: #C4C6D0;
+    --shadow: 0 4px 16px rgba(0,0,0,.12);
+    }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+/* 主题切换/透明度调整全局平滑过渡 */
+body, #nav, .card, .stat, .pcard, #log, .minilog, .modal, #cfgSaveBar, .chip, .btn, .tf input, .m3-field input, .switch .track {
+  transition-property: background-color, border-color, color, opacity, backdrop-filter;
+  transition-duration: .25s;
+  transition-timing-function: ease;
+}
+html, body { height: 100%; }
+/* 变量默认值必须放 :root（不能放 body——body 自身声明会屏蔽 html 上 JS 注入的内联值） */
+:root {
+  --bg-opacity: 0.45;  /* 背景图不透明度（服务端配置注入） */
+  --ui-opacity: 1;     /* UI 层不透明度（服务端配置注入） */
+  --ctl-opacity: 1;    /* 控件（按钮/输入框/滑条）不透明度（服务端配置注入） */
+  --custom-bg: none;   /* 自定义背景图（服务端注入 url） */
+}
+body {
+  background: var(--surface); color: var(--on-surface);
+  font: 14px/1.55 "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", Roboto, sans-serif;
+  overflow: hidden;
+}
+/* 自定义背景层：fixed 全屏，在 UI 之下 */
+#bgLayer {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image: var(--custom-bg, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: var(--bg-opacity);
+}
+#app { position: relative; z-index: 1; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--outline-var); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--outline); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 滑条（range）：轨道跟随控件透明度 */
+input[type="range"] { accent-color: var(--primary); height: 20px; cursor: pointer; }
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 3px;
+  background: color-mix(in srgb, var(--surface-c-highest) calc(var(--ctl-opacity) * 100%), transparent);
+  border: 1px solid color-mix(in srgb, var(--outline-var) 60%, transparent);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 16px; height: 16px; border-radius: 50%; margin-top: -6px;
+  background: var(--primary); box-shadow: 0 1px 4px rgba(0,0,0,.4);
+}
+input[type="range"]::-moz-range-track {
+  height: 6px; border-radius: 3px;
+  background: color-mix(in srgb, var(--surface-c-highest) calc(var(--ctl-opacity) * 100%), transparent);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 16px; height: 16px; border: none; border-radius: 50%;
+  background: var(--primary); box-shadow: 0 1px 4px rgba(0,0,0,.4);
+}
+
+#app { display: flex; height: 100%; }
+
+/* ============ 主区 ============ */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#topbar {
+  flex: none; display: flex; align-items: center; gap: 14px;
+  padding: 18px 28px 8px;
+}
+/* 移动端顶栏小 logo（桌面隐藏，品牌由侧栏承担） */
+#topLogo {
+  display: none; width: 38px; height: 38px; border-radius: 12px; flex: none;
+  background: var(--primary-container); color: var(--on-primary-container);
+  align-items: center; justify-content: center; font-weight: 700; font-size: 15px;
+}
+#topbar .tcol { display: flex; align-items: baseline; gap: 10px; }
+#topbar h1 { font-size: 22px; font-weight: 600; letter-spacing: .2px; }
+#topbar .sub { color: var(--on-surface-var); font-size: 13px; }
+#topbar .spacer { flex: 1; }
+
+/* Chips（页面顶部工具条）跟随透明度 */
+.chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 14px; border-radius: 999px; font-size: 12.5px; font-weight: 500;
+  background: color-mix(in srgb, var(--surface-c-high) calc(var(--ui-opacity) * 100%), transparent);
+  color: var(--on-surface-var);
+  border: 1px solid var(--outline-var);
+}
+.chip .led { width: 9px; height: 9px; border-radius: 50%; background: var(--error); }
+.chip.on { color: var(--success); border-color: transparent; background: color-mix(in srgb, var(--success-container) calc(var(--ctl-opacity) * 100%), transparent); }
+.chip.on .led { background: var(--success); box-shadow: 0 0 8px var(--success); }
+
+#pages { flex: 1; min-height: 0; position: relative; }
+.page { position: absolute; inset: 0; overflow-y: auto; padding: 10px 28px 28px; display: none; }
+.page.show { display: block; animation: pageIn .32s cubic-bezier(.2,.8,.3,1); }
+@keyframes pageIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .page.show, .card, .stat, .pcard, .pluginrow { animation: none !important; } }
