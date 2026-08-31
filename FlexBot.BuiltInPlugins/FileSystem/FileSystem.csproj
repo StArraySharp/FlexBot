@@ -12,9 +12,16 @@
 
   <ItemGroup>
     <!-- 契约层（PluginApi 命名空间）已并入宿主，引用宿主项目获得类型 -->
-    <ProjectReference Include="..\..\FlexBot\FlexBot.csproj" ReferenceOutputAssembly="true" Private="false" />
+    <ProjectReference Include="..\..\FlexBot\FlexBot.csproj" ReferenceOutputAssembly="true" ExcludeAssets="runtime" />
 
-    <ProjectReference Include="..\..\FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" />
+    <ProjectReference Include="..\..\FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" Private="false" />
   </ItemGroup>
-
+  <!-- 宿主已提供的程序集不随插件分发（运行时 PluginLoadContext 回落宿主 ALC 共享）：删副本防膨胀/防版本错乱 -->
+  <Target Name="StripHostAssemblies" AfterTargets="Build">
+    <ItemGroup>
+      <HostDup Include="$(OutDir)FlexBot.dll;$(OutDir)FlexBot.exe;$(OutDir)FlexBot.pdb;$(OutDir)FlexBot.deps.json;$(OutDir)FlexBot.runtimeconfig.json;$(OutDir)OneBotLib.dll;$(OutDir)OneBotLib.pdb;$(OutDir)Photino.NET.dll" />
+    </ItemGroup>
+    <Delete Files="@(HostDup)" ContinueOnError="true" />
+    <RemoveDir Directories="$(OutDir)runtimes" ContinueOnError="true" />
+  </Target>
 </Project>
