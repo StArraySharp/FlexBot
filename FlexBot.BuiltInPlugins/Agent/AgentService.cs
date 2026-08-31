@@ -635,7 +635,29 @@ class AgentService
         }
         catch (Exception ex) { Console.WriteLine($"[mem] day-summary save failed: {ex.Message}"); }
 
-        return $"【{dayStart:yyyy-MM-dd} 群 {groupId} 全天总结】（{dayMsgs.Count} 条消息）\n{summary}";
+        // 合并转发当天原始聊天记录到群里（保留原始消息段：图片/表情/引用原样呈现；超 300 节点保留最新）
+        const int maxNodes = 300;
+        var nodeSource = dayMsgs.Count > maxNodes ? dayMsgs[^maxNodes..] : dayMsgs;
+        var nodes = new List<ForwardNode>();
+        foreach (var info in nodeSource)
+        {
+            var segs = ChatUtils.JsonToSegments(info.Message);
+            if (segs.Count == 0) continue;
+            var name = info.Sender?.DisplayName;
+            if (string.IsNullOrWhiteSpace(name)) name = info.UserId.ToString();
+            nodes.Add(new ForwardNode { UserId = info.UserId, Nickname = name, Content = segs });
+        }
+        var forwardNote = "";
+        if (nodes.Count > 0)
+        {
+            var fr = await _api.SendGroupForwardMsgAsync(groupId, nodes);
+            forwardNote = fr.Success
+                ? $"\n（已把当天 {nodes.Count} 条原始聊天合并转发到群）"
+                : $"\n（合并转发失败: {fr.ErrorMessage}）";
+            Console.WriteLine($"[mem] day-forward group {groupId}: {nodes.Count} nodes -> {(fr.Success ? "ok" : fr.ErrorMessage)}");
+        }
+
+        return $"【{dayStart:yyyy-MM-dd} 群 {groupId} 全天总结】（{dayMsgs.Count} 条消息）\n{summary}{forwardNote}";
     }
 
     // 把 MCAIChatMessage 内容转纯文本（用于总结等场景）

@@ -17,6 +17,12 @@ public interface IBotApi
 
     Task<ApiResult<long>> SendGroupMsgAsync(long groupId, object message);
 
+    /// <summary>发送合并转发消息到群（messages 为转发节点列表）</summary>
+    Task<ApiResult<long>> SendGroupForwardMsgAsync(long groupId, List<ForwardNode> messages);
+
+    /// <summary>发送合并转发消息到私聊（messages 为转发节点列表）</summary>
+    Task<ApiResult<long>> SendPrivateForwardMsgAsync(long userId, List<ForwardNode> messages);
+
     /// <summary>撤回消息（需要机器人有管理权限或消息是自己发的）</summary>
     Task<ApiResult> DeleteMsgAsync(long messageId);
 
