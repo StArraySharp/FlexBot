@@ -33,8 +33,7 @@ public sealed class ChatPlugin : IBotPlugin
         new("Model", "模型名", "text", "glm-4-flash", "主模型；失败时按备用列表回落"),
         new("FallbackModels", "备用模型回落链", "models", "[]", "主模型失败时按顺序尝试；每行可独立测试"),
         new("Personas", "人格", "personas", "[]", "可维护多套系统提示词；必须且只能启用一个"),
-        new("NameKeywords", "名字唤醒关键词", "text", "科比", "逗号分隔，消息命中任一关键词即视为被呼叫（等同被 @）"),
-        new("ReplyProbability", "普通消息回复概率 %", "number", "20", "未被 @ 的群消息触发 AI 判断的概率"),
+        new("NameKeywords", "名字唤醒关键词", "text", "科比", "逗号分隔，消息以任一关键词开头即视为被呼叫（等同被 @）"),
         new("ImageReplyProbability", "纯图片/表情回复概率 %", "number", "20", "无文字消息触发 AI 判断的概率"),
     ];
 
@@ -172,8 +171,8 @@ public sealed class ChatPlugin : IBotPlugin
         var calledByName = _nameRegex.IsMatch(m.PlainText.TrimStart());
         var atMe = BotHelpers.IsMentionedMe(m, m.SelfId);
 
-        // 消息 @ 了其他人/别的机器人（但没有 @ 本机器人）→ 视为发给对方的，杜绝回复
-        if (!atMe && BotHelpers.MentionsOthers(m, m.SelfId))
+        // 消息 @ 了其他人/别的机器人，但既没 @ 本机器人也没叫名字 → 视为发给对方的，保持沉默
+        if (!atMe && !calledByName && BotHelpers.MentionsOthers(m, m.SelfId))
         {
             Console.WriteLine($"[group] {gid}: mentions another user/bot, stay silent");
             return Handled.Continue;
@@ -281,13 +280,7 @@ public sealed class ChatPlugin : IBotPlugin
                 return Handled.Continue;
             }
 
-            // 普通消息按概率尝试回复（AI 再判断是否值得回；插件设置 ReplyProbability）
-            if (Random.Shared.NextDouble() >= _ctx.GetSetting("ReplyProbability", 20) / 100.0)
-            {
-                Console.WriteLine($"[group] {gid}: 60% silent gate passed, stay silent");
-                return Handled.Continue;
-            }
-
+            // 普通文本消息：不再做概率静默，全部交给 AI 判断（SILENT 即不回复）
             // 决定处理：此时才提取引用/图片（避免每条消息都调 API）
             var quoted2 = await _extractor.ExtractQuotedContextAsync(m);
             var imgParts2 = await _extractor.ExtractImagePartsAsync(m);
