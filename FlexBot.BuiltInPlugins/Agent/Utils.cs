@@ -10,6 +10,14 @@ namespace AgentPlugin;
 // 纯静态工具函数：无状态、可安全全局共享
 static class ChatUtils
 {
+    // 概率判定：投 10 次骰子（每次 0-100），取平均值与阈值比较。
+    // 均值分布集中于 50 附近：低阈值几乎不触发、高阈值几乎必触发，比单次均匀抽样更稳定。
+    internal static bool DiceHit(int percent)
+    {
+        var sum = 0;
+        for (var i = 0; i < 10; i++) sum += Random.Shared.Next(101);
+        return sum / 10.0 < percent;
+    }
     // QQ 表情（face 段）→ 名称文本，让 AI 感知用户发的表情
     private static readonly Dictionary<int, string> FaceNames = new()
     {

@@ -16,6 +16,7 @@ public sealed class ChatPlugin : IBotPlugin
     private ContextExtractor _extractor = null!;
     private AgentService _agent = null!;
     private readonly List<IDisposable> _subs = [];
+    private readonly List<IDisposable> _commandSubs = [];
 
     // 触发消息 → 待回复的取消令牌：消息被撤回时取消，停止后续分段发送
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _pending = [];
@@ -34,7 +35,8 @@ public sealed class ChatPlugin : IBotPlugin
         new("FallbackModels", "备用模型回落链", "models", "[]", "主模型失败时按顺序尝试；每行可独立测试"),
         new("Personas", "人格", "personas", "[]", "可维护多套系统提示词；必须且只能启用一个"),
         new("NameKeywords", "名字唤醒关键词", "text", "科比", "逗号分隔，消息以任一关键词开头即视为被呼叫（等同被 @）"),
-        new("ImageReplyProbability", "纯图片/表情回复概率 %", "number", "20", "无文字消息触发 AI 判断的概率"),
+        new("ReplyProbability", "普通消息回复概率 %", "number", "20", "未被 @ 的群消息触发 AI 判断的概率（骰子算法：10 次均值，阈值越远离 50 越趋向必发/必不发）"),
+        new("ImageReplyProbability", "纯图片/表情回复概率 %", "number", "20", "无文字消息触发 AI 判断的概率（同上骰子算法）"),
     ];
 
     // 名字关键词正则（由设置构建，热更新）
@@ -72,6 +74,18 @@ public sealed class ChatPlugin : IBotPlugin
         _subs.Add(context.Messages.OnPrivate(OnPrivateAsync, priority: 0, tag: Name));
         _subs.Add(context.Messages.OnGroup(OnGroupAsync, priority: 0, tag: Name));
 
+        // 手动按天总结群聊（0 点到 24 点）：结果回发并追加为该群长期记忆的最新摘要段
+        _commandSubs.Add(context.RegisterCommand(
+            "summary", "总结指定群当天的聊天记录（00:00-24:00）",
+            async args =>
+            {
+                if (!long.TryParse(args.Trim(), out var gid) || gid <= 0)
+                    return "用法: summary <群号>（总结今天 0 点至 24 点的群聊）";
+                var result = await _agent.SummarizeDayAsync(gid, DateTime.Today);
+                return result.Length > 1800 ? result[..1800] + "\n…（已截断，完整版见记忆文件）" : result;
+            },
+            "summary <群号>"));
+
         // 消息撤回 → 中止对该消息的回复（停止发送后续分段）
         _subs.Add(context.Events.On<GroupRecallEventArgs>(e => CancelByRecall(e.MessageId, $"group {e.GroupId}"), tag: Name));
         _subs.Add(context.Events.On<FriendRecallEventArgs>(e => CancelByRecall(e.MessageId, $"friend {e.UserId}"), tag: Name));
@@ -93,6 +107,8 @@ public sealed class ChatPlugin : IBotPlugin
     {
         foreach (var sub in _subs) sub.Dispose();
         _subs.Clear();
+        foreach (var sub in _commandSubs) sub.Dispose();
+        _commandSubs.Clear();
         foreach (var cts in _pending.Values) { try { cts.Cancel(); cts.Dispose(); } catch { } }
         _pending.Clear();
         _agent = null!;
@@ -236,9 +252,9 @@ public sealed class ChatPlugin : IBotPlugin
                 }
 
                 // 普通图片/表情消息按概率尝试回复（AI 判断是否值得回；插件设置 ImageReplyProbability）
-                if (Random.Shared.NextDouble() >= _ctx.GetSetting("ImageReplyProbability", 20) / 100.0)
+                if (!ChatUtils.DiceHit(_ctx.GetSetting("ImageReplyProbability", 20)))
                 {
-                    Console.WriteLine($"[group] {gid}: random gate passed, stay silent");
+                    Console.WriteLine($"[group] {gid}: dice gate passed, stay silent");
                     return Handled.Continue;
                 }
 
@@ -280,7 +296,13 @@ public sealed class ChatPlugin : IBotPlugin
                 return Handled.Continue;
             }
 
-            // 普通文本消息：不再做概率静默，全部交给 AI 判断（SILENT 即不回复）
+            // 普通文本消息：骰子概率门（10 次均值），未命中保持沉默；命中交给 AI 判断（SILENT 即不回复）
+            if (!ChatUtils.DiceHit(_ctx.GetSetting("ReplyProbability", 20)))
+            {
+                Console.WriteLine($"[group] {gid}: dice gate passed, stay silent");
+                return Handled.Continue;
+            }
+
             // 决定处理：此时才提取引用/图片（避免每条消息都调 API）
             var quoted2 = await _extractor.ExtractQuotedContextAsync(m);
             var imgParts2 = await _extractor.ExtractImagePartsAsync(m);

@@ -6,6 +6,8 @@ using System.Text.RegularExpressions;
 using FlexBot.PluginApi;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OneBotLib.Api;
+using OneBotLib.Models;
 using OpenAI;
 using OpenAI.Chat;
 using MCAIChatMessage = Microsoft.Extensions.AI.ChatMessage;
@@ -47,7 +49,6 @@ class AgentService
 
     // 会话上下文（真正的 user/assistant 消息轮次结构，超限按轮次截断）
     private readonly ConcurrentDictionary<string, List<MCAIChatMessage>> _convHist = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, int> _convCount = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _convLocks = new(StringComparer.OrdinalIgnoreCase);
 
     // 记忆文件缓存：key → (最后修改时间, 最近一段摘要)，避免每次 @ 都读整个文件
@@ -277,9 +278,6 @@ class AgentService
             // 超过轮次上限则丢最旧的一整轮（2 条）
             while (h2.Count > _cfg.MaxContextTurns * 2) h2.RemoveRange(0, 2);
 
-            _convCount[key] = _convCount.GetValueOrDefault(key) + 1;
-            // 自动总结不阻塞回复（后台异步执行）
-            _ = Task.Run(() => AutoSummarizeAsync(key));
             return answer;
         }
         catch (Exception ex)
@@ -573,28 +571,71 @@ class AgentService
         catch (Exception ex) { Console.WriteLine($"[ai] 响应调试信息解析失败: {ex.Message}"); }
     }
 
-    // 每 2 条消息自动总结并存为 Markdown 记忆
-    private async Task AutoSummarizeAsync(string key)
+    // 手动按天总结：拉取指定群某日 0 点到 24 点的全部历史，交给总结模型，产出 Markdown
+    // 结果追加进长期记忆文件（作为最新摘要段注入后续对话），并返回给命令调用方
+    public async Task<string> SummarizeDayAsync(long groupId, DateTime date)
     {
-        if (_convCount[key] % 2 != 0) return;
-        if (!_convHist.TryGetValue(key, out var hist) || hist.Count == 0) return;
+        var dayStart = date.Date;
+        var dayEnd = dayStart.AddDays(1);
+        var startUnix = new DateTimeOffset(dayStart, TimeZoneInfo.Local.GetUtcOffset(dayStart)).ToUnixTimeSeconds();
+        var endUnix = new DateTimeOffset(dayEnd, TimeZoneInfo.Local.GetUtcOffset(dayEnd)).ToUnixTimeSeconds();
+
+        // 分页向过去回拉，直到最旧消息早于当天 0 点或拉满页数上限
+        const int pageSize = 100;
+        const int maxPages = 15;
+        var all = new List<MsgInfo>();
+        long? anchor = null;
+        for (var page = 0; page < maxPages; page++)
+        {
+            var r = anchor is null
+                ? await _api.GetGroupMsgHistoryAsync(groupId, count: pageSize)
+                : await _api.GetGroupMsgHistoryAsync(groupId, messageId: anchor, count: pageSize);
+            if (!r.Success || r.Data is null || r.Data.Count == 0) break;
+            all.AddRange(r.Data);
+            var oldest = r.Data.Min(x => x.Time);
+            if (oldest <= startUnix) break;
+            anchor = r.Data.Min(x => x.MessageId);
+        }
+
+        var dayMsgs = all
+            .Where(x => x.MessageType == "group" && x.Time >= startUnix && x.Time < endUnix)
+            .OrderBy(x => x.Time)
+            .ToList();
+        if (dayMsgs.Count == 0)
+            return $"{dayStart:yyyy-MM-dd} 该群没有可总结的消息。";
+
+        var selfId = _api.SelfId;
+        var sb = new StringBuilder();
+        foreach (var info in dayMsgs)
+        {
+            var name = info.Sender?.DisplayName;
+            if (string.IsNullOrWhiteSpace(name)) name = info.UserId.ToString();
+            if (info.UserId == selfId) name = "我";
+            var text = ChatUtils.MsgToText(info.Message).Trim();
+            if (string.IsNullOrWhiteSpace(text)) text = ChatUtils.JsonToSegments(info.Message).Any(s => s.Type == "image") ? "[图片]" : "";
+            if (text.Length == 0) continue;
+            var dt = DateTimeOffset.FromUnixTimeSeconds(info.Time).LocalDateTime;
+            sb.Append(dt.ToString("HH:mm")).Append(' ').Append(name).Append(": ").Append(text).Append('\n');
+        }
+        var transcript = sb.ToString();
+        if (transcript.Length > 15000) transcript = transcript[^15000..] + "…（更早消息已截断）";
+        if (transcript.Trim().Length == 0)
+            return $"{dayStart:yyyy-MM-dd} 该群当天没有文本消息。";
+
+        Console.WriteLine($"[mem] day-summary group {groupId} {dayStart:yyyy-MM-dd}: {dayMsgs.Count} 条消息");
+        var prompt = $"以下是 QQ 群 {groupId} 在 {dayStart:yyyy-MM-dd} 00:00-24:00 的聊天记录，请总结当天的主要内容：讨论了什么话题、谁参与了什么观点、有什么重要事件或结论、群氛围如何。用简洁的 Markdown 分点输出。\n\n{transcript}";
+        var summary = (await _summarizer.RunAsync(prompt)).ToString();
 
         try
         {
-            // 取最近一轮（2 条消息）转文本
-            var recent = hist.TakeLast(2);
-            var transcript = string.Join("\n\n", recent.Select(m =>
-                (m.Role == Microsoft.Extensions.AI.ChatRole.User ? "用户" : "机器人") + ": " + MsgContentToText(m)));
-            var summary = (await _summarizer.RunAsync("请用简洁 Markdown 总结以下对话要点：\n\n" + transcript)).ToString();
             Directory.CreateDirectory(_memoryDir);
-            var file = Path.Combine(_memoryDir, "conversation_" + key + ".md");
-            await File.AppendAllTextAsync(file, $"\n## {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n{summary}\n");
-            Console.WriteLine($"[mem] auto-summary saved: {file}");
+            var file = Path.Combine(_memoryDir, $"conversation_group{groupId}.md");
+            await File.AppendAllTextAsync(file, $"\n## {dayStart:yyyy-MM-dd} 全天总结\n{summary}\n");
+            Console.WriteLine($"[mem] day-summary saved: {file}");
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[mem] auto-summary failed: {ex.Message}");
-        }
+        catch (Exception ex) { Console.WriteLine($"[mem] day-summary save failed: {ex.Message}"); }
+
+        return $"【{dayStart:yyyy-MM-dd} 群 {groupId} 全天总结】（{dayMsgs.Count} 条消息）\n{summary}";
     }
 
     // 把 MCAIChatMessage 内容转纯文本（用于总结等场景）
