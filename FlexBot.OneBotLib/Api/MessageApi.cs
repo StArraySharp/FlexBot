@@ -222,7 +222,8 @@ namespace OneBotLib.Api
             {
                 parameters["message_id"] = messageId.Value;
             }
-            return await SendApiAsync<List<MsgInfo>>("get_group_msg_history", parameters);
+            var result = await SendApiAsync("get_group_msg_history", parameters);
+            return ToMsgListResult(result);
         }
 
         public async Task<ApiResult<List<MsgInfo>>> GetPrivateMsgHistoryAsync(long userId, long? messageId = null, int count = 20)
@@ -236,7 +237,31 @@ namespace OneBotLib.Api
             {
                 parameters["message_id"] = messageId.Value;
             }
-            return await SendApiAsync<List<MsgInfo>>("get_private_msg_history", parameters);
+            var result = await SendApiAsync("get_private_msg_history", parameters);
+            return ToMsgListResult(result);
+        }
+
+        // get_*_msg_history 的 data 兼容两种形态：数组（直接列表）或对象 {messages:[...]}（NapCat/LLOneBot 实现）
+        private static ApiResult<List<MsgInfo>> ToMsgListResult(ApiResult<System.Text.Json.JsonElement> result)
+        {
+            if (!result.Success)
+                return ApiResult<List<MsgInfo>>.Fail(result.ErrorMessage!, result.StackTrace);
+            try
+            {
+                if (result.Data.ValueKind == System.Text.Json.JsonValueKind.Null
+                    || result.Data.ValueKind == System.Text.Json.JsonValueKind.Undefined)
+                    return ApiResult<List<MsgInfo>>.Ok([]);
+                var el = result.Data.ValueKind == System.Text.Json.JsonValueKind.Object
+                         && result.Data.TryGetProperty("messages", out var arr)
+                    ? arr
+                    : result.Data;
+                var list = JsonSerializer.Deserialize<List<MsgInfo>>(el.GetRawText()) ?? [];
+                return ApiResult<List<MsgInfo>>.Ok(list);
+            }
+            catch (Exception ex)
+            {
+                return ApiResult<List<MsgInfo>>.Fail(ex);
+            }
         }
 
         public async Task<ApiResult<List<MsgInfo>>> GetRecentMsgAsync(int count = 20)

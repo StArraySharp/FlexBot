@@ -56,7 +56,8 @@ public sealed class ChatPlugin : IBotPlugin
             .Where(k => k.Length > 0)
             .ToList();
         if (kws.Count == 0) kws.Add(Regex.Escape("科比"));
-        _nameRegex = new Regex(string.Join("|", kws), RegexOptions.Compiled);
+        // 锚定开头：唤醒词必须出现在消息起始处才视为呼叫（避免正文提及即触发）
+        _nameRegex = new Regex("^(?:" + string.Join("|", kws) + ")", RegexOptions.Compiled);
     }
 
     public Task OnLoadAsync(IBotContext context)
@@ -167,8 +168,8 @@ public sealed class ChatPlugin : IBotPlugin
             return Handled.Continue;
         }
 
-        // 精确匹配名字 科比：被 @ 或叫"科比"时回应（便捷方法来自 PluginApi.BotHelpers）
-        var calledByName = _nameRegex.IsMatch(m.PlainText);
+        // 精确匹配名字 科比：被 @ 或消息开头叫"科比"时回应（便捷方法来自 PluginApi.BotHelpers）
+        var calledByName = _nameRegex.IsMatch(m.PlainText.TrimStart());
         var atMe = BotHelpers.IsMentionedMe(m, m.SelfId);
 
         // 消息 @ 了其他人/别的机器人（但没有 @ 本机器人）→ 视为发给对方的，杜绝回复
