@@ -186,6 +186,7 @@ async Task HandlePrivateAsync(PrivateMessageEventArgs e)
 var logDir = string.IsNullOrWhiteSpace(settings.LogDir)
     ? Path.Combine(settings.MemoryDir, "logs")
     : settings.LogDir;
+Directory.CreateDirectory(settings.MemoryDir); // 记忆/插件数据根目录缺失时兜底创建
 Directory.CreateDirectory(logDir);
 
 // 启动外部依赖（NapCat、LLBot）
