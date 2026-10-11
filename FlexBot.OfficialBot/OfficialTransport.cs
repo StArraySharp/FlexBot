@@ -251,7 +251,40 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
                 string.IsNullOrWhiteSpace(c.Description) ? (c.Usage ?? "") : c.Description,
                 c.OnlyAdmin))
             .ToList();
-        if (all.Count == 0) return 0;
+
+        if (all.Count == 0)
+        {
+            // 传空集合 = 清空既有指令面板（关闭注册时用，避免客户端里留着过期指令）
+            var st = LoadPanelState();
+            foreach (var scope in new[] { CommandPanelScope.C2C, CommandPanelScope.Group })
+            {
+                var key = scope.ToString();
+                try
+                {
+                    ICommandPanel? panel = null;
+                    try
+                    {
+                        await foreach (var page in _client.GetCommandPanelsAsync(scope, options: null))
+                        {
+                            foreach (var pl in page) { panel = pl; break; }
+                            if (panel is not null) break;
+                        }
+                    }
+                    catch (Exception ex) { Log($"指令面板 {key}：列举失败 {ex.Message}，改按记录 id 取"); }
+                    if (panel is null && st.TryGetValue(key, out var s0) && s0.Id is { Length: > 0 } id0)
+                    {
+                        try { panel = await _client.GetCommandPanelAsync(id0, options: null); } catch { }
+                    }
+                    if (panel is null) { Log($"指令面板 {key}：平台上没有可清空的面板"); continue; }
+                    await panel.ModifyAsync([], _ => { }, options: null);
+                    st.Remove(key);
+                    Log($"指令面板 {key}：已清空");
+                }
+                catch (Exception ex) { Log($"指令面板 {key}：清空失败 {ex.Message}（可在开放平台管理端手动删除）"); }
+            }
+            SavePanelState(st);
+            return 0;
+        }
 
         var state = LoadPanelState();
         var total = 0;

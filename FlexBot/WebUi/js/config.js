@@ -20,6 +20,7 @@ async function loadConfig() {
     $('cfgTransport').value = c.transport || 'onebot';
     $('cfgOfficialAppId').value = c.officialAppId || '';
     $('cfgOfficialSandbox').checked = c.officialSandbox !== false;
+    $('cfgOfficialRegisterCmds').checked = c.officialRegisterCommands === true;
     $('cfgOfficialSecret').value = '';            // 官方密钥不回显（服务端只告诉是否已设置）
     $('cfgWebUiPort').value = c.webUiPort || '';
     $('cfgWebUiPwd').value = ''; // 密码不回显（服务端只存 SHA256）
@@ -56,6 +57,7 @@ $('cfgSave').onclick = async () => {
       transport: v('cfgTransport'),
       officialAppId: v('cfgOfficialAppId'),
       officialSandbox: $('cfgOfficialSandbox').checked,
+      officialRegisterCommands: $('cfgOfficialRegisterCmds').checked,
       ...($('cfgOfficialSecret').value.length > 0 ? { officialAppSecret: $('cfgOfficialSecret').value } : {}),
       webUiPort: webUiPort,
       ...($('cfgWebUiPwd').value.length > 0 ? { webUiPassword: $('cfgWebUiPwd').value } : {}),

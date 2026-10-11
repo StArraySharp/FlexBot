@@ -484,6 +484,7 @@ static class WebUi
             transport = settings.Transport,
             officialAppId = settings.OfficialAppId,
             officialSandbox = settings.OfficialSandbox,
+            officialRegisterCommands = settings.OfficialRegisterCommands,
             officialAppSecretSet = !string.IsNullOrWhiteSpace(settings.OfficialAppSecret),   // 密钥不回显（只告诉是否已设置）
             pluginAutoload = plugins.GetSnapshot().ToDictionary(p => p.Name, p => p.AutoLoad)
         }));
@@ -534,6 +535,7 @@ static class WebUi
                 }
                 if (p.OfficialAppId is not null) settings.OfficialAppId = p.OfficialAppId.Trim();
                 if (p.OfficialSandbox.HasValue) settings.OfficialSandbox = p.OfficialSandbox.Value;
+                if (p.OfficialRegisterCommands.HasValue) settings.OfficialRegisterCommands = p.OfficialRegisterCommands.Value;
                 // 官方机器人密钥：留空=不修改；"-"=清除（与 WebUI 密码同规矩，且从不回显）
                 if (!string.IsNullOrEmpty(p.OfficialAppSecret))
                 {
@@ -681,7 +683,7 @@ static class WebUi
         Dictionary<string, bool>? PluginAutoload, bool? ReloadPlugins,
         string? NapCatCmd, string? LLBotCmd, string? LogDir, bool? IsolateDependencyLogs,
         int? WebUiPort, string? WebUiPassword,
-        string? Transport, string? OfficialAppId, string? OfficialAppSecret, bool? OfficialSandbox);
+        string? Transport, string? OfficialAppId, string? OfficialAppSecret, bool? OfficialSandbox, bool? OfficialRegisterCommands);
     private sealed record TestModelPayload(string? ApiKey, string? BaseUrl, string? Model);
     private sealed record InstructionsPayload(string? Text, bool? Reload);
 

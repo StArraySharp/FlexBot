@@ -52,6 +52,11 @@ class HostSettings
     /// <summary>官方通道：true=沙箱环境，false=正式环境</summary>
     [System.Text.Json.Serialization.JsonPropertyName("OfficialSandbox")]
     public bool OfficialSandbox { get; set; } = true;
+    /// <summary>官方通道：是否把命令注册成客户端可见的「指令面板」。
+    /// 默认 false —— 平台对指令条目有硬上限（实测本 bot 为 10 条/场景，超出报 30013），
+    /// 命令多的时候装不下、还容易被截断误导，故不注册；命令照旧用「前缀+命令名」直接发。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("OfficialRegisterCommands")]
+    public bool OfficialRegisterCommands { get; set; } = false;
     /// <summary>全局命令前缀（消息以该前缀开头才会进入命令分发；默认 "!"）。</summary>
     public string CommandPrefix { get; set; } = "!";
 

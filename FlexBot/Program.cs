@@ -52,6 +52,17 @@ client.OnConnectionStateChanged += (s, e) =>
             await Task.Delay(TimeSpan.FromSeconds(6));
             try
             {
+                if (!settings.OfficialRegisterCommands)
+                {
+                    // 关闭指令注册（默认）：尽量清空之前注册过的面板；官方 API 没有"删除面板"接口，
+                    // 若清空被拒（30016 必填字段缺失），需到开放平台管理端手动删除。
+                    var cleared = await client.SyncCommandPanelsAsync([]);
+                    Console.WriteLine(cleared >= 0
+                        ? "[official] 官方指令注册已关闭（OfficialRegisterCommands=false）：不再注册/更新指令面板；" +
+                          "平台上已存在的面板官方 API 删不掉，如需清理请到开放平台管理端删除"
+                        : "[official] 官方指令注册已关闭（当前通道不支持指令面板）");
+                    return;
+                }
                 var specs = new List<BotCommandSpec>
                 {
                     new("plugin", "插件管理", "plugin [list|load|unload|reload] <名称>", true),
