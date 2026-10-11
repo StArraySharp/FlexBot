@@ -310,7 +310,9 @@ class AgentService
     // ===================== 流式运行（实时上报 + 回落兜底） =====================
 
     /// <summary>
-    /// 工具调用前，把模型本轮输出的文本先发到聊天；若本轮没有文本，就只发一行工具名（至少让用户知道它在干活）。
+    /// 工具调用前把模型本轮输出的文本发到聊天（**始终发**，不受开关影响）；
+    /// 开关 NotifyToolCalls 只决定要不要额外附一行「🔧 调用工具 &lt;名&gt;」。
+    /// 本轮没有文本且开关关闭时，什么都不发。
     /// 发出的文本记进 TurnContext.PostedLead，最终回答里会剥掉这段前缀，避免重复。
     /// </summary>
     private async Task NotifyToolCallAsync(TurnContext turn, FunctionCallContent call, string roundText)
@@ -323,15 +325,17 @@ class AgentService
                 sb.Append(roundText);
                 turn.PostedLead += roundText;
             }
-            sb.Append(sb.Length > 0 ? "\n\n" : "").Append($"🔧 调用工具 {call.Name}");
+            if (_notifyToolCalls)
+                sb.Append(sb.Length > 0 ? "\n\n" : "").Append($"🔧 调用工具 {call.Name}");
+            if (sb.Length == 0) return;
 
             var text = sb.ToString();
             var r = turn.GroupId > 0
                 ? await _api.SendGroupMsgAsync(turn.GroupId, text)
                 : await _api.SendPrivateMsgAsync(turn.CallerUin, text);
-            if (!r.Success) Console.WriteLine($"[ai] 工具调用提示发送失败: {r.ErrorMessage}");
+            if (!r.Success) Console.WriteLine($"[ai] 工具调用前文本发送失败: {r.ErrorMessage}");
         }
-        catch (Exception ex) { Console.WriteLine($"[ai] 工具调用提示异常: {ex.Message}"); }
+        catch (Exception ex) { Console.WriteLine($"[ai] 工具调用前文本发送异常: {ex.Message}"); }
     }
 
     // 流式主路径：遍历 AgentResponseUpdate，文本增量与工具调用实时回调；失败回落非流式链
@@ -353,8 +357,8 @@ class AgentService
                     sbRound.Clear();
                     _tools.LastToolRoundText = roundText;
 
-                    // 工具调用前：先把模型这段文本发到聊天（开关：插件设置「工具调用提示」）
-                    if (_notifyToolCalls && CurrentTurn.Value is { } turn0)
+                    // 工具调用前：把模型这段文本发到聊天（始终发）；开关只决定是否附「🔧 调用工具 xxx」提示行
+                    if (CurrentTurn.Value is { } turn0)
                         await NotifyToolCallAsync(turn0, call, roundText);
 
                     var argBrief = call.Arguments is { Count: > 0 }

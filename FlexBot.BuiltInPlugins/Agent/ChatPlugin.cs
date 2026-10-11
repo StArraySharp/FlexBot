@@ -37,7 +37,7 @@ public sealed class ChatPlugin : IBotPlugin
         new("NameKeywords", "名字唤醒关键词", "text", "科比", "逗号分隔，消息以任一关键词开头即视为被呼叫（等同被 @）"),
         new("ReplyProbability", "普通消息回复概率 %", "number", "20", "未被 @ 的群消息触发 AI 判断的概率（骰子算法：10 次均值，阈值越远离 50 越趋向必发/必不发）"),
         new("ImageReplyProbability", "纯图片/表情回复概率 %", "number", "20", "无文字消息触发 AI 判断的概率（同上骰子算法）"),
-        new("NotifyToolCalls", "工具调用提示", "bool", "true", "开启后：每次工具调用前先把模型这一步输出的文本发到聊天（并附一行工具名），让你看到它在做什么"),
+        new("NotifyToolCalls", "工具调用提示行", "bool", "true", "模型在工具调用前输出的文本始终会发到聊天；本开关只决定是否额外附一行「🔧 调用工具 xxx」（关掉更干净）"),
     ];
 
     // 名字关键词正则（由设置构建，热更新）
