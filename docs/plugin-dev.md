@@ -2,7 +2,7 @@
 
 插件就是"一个目录 + 一个实现 `IBotPlugin` 的类"，宿主自动发现、隔离加载、支持热重载。
 接口清单与逐条说明见 [插件 API 参考](plugin-api.md)；本页讲**怎么做**。
-### 一、脚本插件（免编译，推荐）
+## 一、脚本插件（免编译，推荐）
 
 把 `*.cs` 丢进 `plugins/<名称>/` 即可——宿主加载时用 Roslyn **在内存中编译**，改完执行
 `!plugin reload <名称>` 就生效，不需要 csproj、不需要 `dotnet build`、不需要重启。
@@ -75,7 +75,7 @@ public sealed class WeatherPlugin : IBotPlugin
 
 不参与编译的目录：点开头的目录（如 `.cache/`）、`libs/`、`backups/`、`bin/`、`obj/`。
 
-### 二、编译型插件（DLL）
+## 二、编译型插件（DLL）
 
 需要第三方 NuGet、或想分发独立 dll 时使用：实现 `FlexBot.PluginApi.IBotPlugin`，输出到
 `plugins/<名称>/<名称>.dll` 即被自动发现。两类插件共用同一套加载/卸载/热重载机制；
