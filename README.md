@@ -279,3 +279,31 @@ samples/csx-json/        # csx 脚本插件示例（NuGet 依赖 + 生成审计�
 这意味着你可以自由使用、修改、自建部署；但如果你**修改后把它作为对外服务提供**，需要按 AGPL 公开你的修改。第三方插件通过公开接口调用本项目，实践上通常不被视为衍生作品（具体取决于法律解释）。
 
 发布包（`FlexBot-<版本>-<rid>.zip`）内同时附带 `LICENSE` 与 `使用说明.txt`。
+
+## 第三方库与外部依赖
+
+### 直接依赖（编译进产物或随包分发）
+
+| 库 | 用途 | 许可证 | 链接 |
+|---|---|---|---|
+| Photino.NET 4.0.16 | 桌面窗口（宿主可选用 Photino 界面） | Apache-2.0 | [GitHub](https://github.com/tryphotino/photino.NET) · [NuGet](https://www.nuget.org/packages/Photino.NET) |
+| Microsoft.CodeAnalysis.CSharp 5.9.0 | csx 脚本插件的内存编译（Roslyn） | MIT | [GitHub](https://github.com/dotnet/roslyn) · [NuGet](https://www.nuget.org/packages/Microsoft.CodeAnalysis.CSharp) |
+| QQBot.Net 0.2.0 | QQ 官方机器人开放平台通道（token / 网关 / 指令 / 互动） | MIT | [GitHub](https://github.com/gehongyan/QQBot.Net) · [文档](https://qqbotnet.dev/) |
+| Microsoft Agent Framework（Microsoft.Agents.AI / .OpenAI）1.17.0 | Agent 插件的模型调用与工具循环 | MIT | [GitHub](https://github.com/microsoft/agent-framework) · [NuGet](https://www.nuget.org/packages/Microsoft.Agents.AI) |
+| ILSpy / ICSharpCode.Decompiler 11.0 | PluginApi 插件的反编译查询 | MIT | [GitHub](https://github.com/icsharpcode/ILSpy) · [NuGet](https://www.nuget.org/packages/ICSharpCode.Decompiler) |
+| System.Drawing.Common 10.0.11 | PCControl 插件的截图处理 | MIT | [GitHub](https://github.com/dotnet/runtime) · [NuGet](https://www.nuget.org/packages/System.Drawing.Common) |
+| Newtonsoft.Json 13.0.4（仅示例） | samples/csx-json 演示 NuGet 依赖自动解析到 libs/ | MIT | [GitHub](https://github.com/JamesNK/Newtonsoft.Json) · [NuGet](https://www.nuget.org/packages/Newtonsoft.Json) |
+
+以上依赖全部为宽松许可（MIT / Apache-2.0），与本项目的 AGPL-3.0 兼容；分发时保留其版权与许可声明即可。
+
+### 运行时外部依赖（未随包分发，需自行部署）
+
+| 项目 | 说明 | 链接 |
+|---|---|---|
+| OneBot 11 标准 | 默认通道所遵循的协议规范 | [botuniverse/onebot-11](https://github.com/botuniverse/onebot-11) |
+| LLBot（LuckyLillia） | OneBot 11 / Satori / Milky 实现，支持无界面 CLI 运行 | [LLOneBot/LuckyLilliaBot](https://github.com/LLOneBot/LuckyLilliaBot) |
+| NapCat | 另一套 OneBot 11 实现（宿主同样支持） | [NapNeko/NapCatQQ](https://github.com/NapNeko/NapCatQQ) |
+| QQ 官方机器人开放平台 | 官方通道的开放平台入口与开发文档 | [开放平台](https://bot.q.qq.com/open) · [文档](https://bot.q.qq.com/wiki/) |
+| .NET 10 / ASP.NET Core | 宿主运行时（自包含发布包已内置，无需另装） | [dotnet/runtime](https://github.com/dotnet/runtime) · [dotnet/aspnetcore](https://github.com/dotnet/aspnetcore) |
+
+感谢上述项目的作者与社区。宿主只通过标准协议或公开 HTTP API 与外部实现交互，这些项目均不属于本项目的一部分。
