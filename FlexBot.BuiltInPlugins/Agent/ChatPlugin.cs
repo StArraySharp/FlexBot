@@ -37,7 +37,7 @@ public sealed class ChatPlugin : IBotPlugin
         new("NameKeywords", "名字唤醒关键词", "text", "科比", "逗号分隔，消息以任一关键词开头即视为被呼叫（等同被 @）"),
         new("ReplyProbability", "普通消息回复概率 %", "number", "20", "未被 @ 的群消息触发 AI 判断的概率（骰子算法：10 次均值，阈值越远离 50 越趋向必发/必不发）"),
         new("ImageReplyProbability", "纯图片/表情回复概率 %", "number", "20", "无文字消息触发 AI 判断的概率（同上骰子算法）"),
-        new("NotifyToolCalls", "工具调用提示行", "bool", "true", "模型在工具调用前输出的文本始终会发到聊天；本开关只决定是否额外附一行「🔧 调用工具 xxx」（关掉更干净）"),
+        new("NotifyToolCalls", "工具调用提示行", "bool", "true", "模型在工具调用前输出的文本始终会发到聊天；本开关只决定是否再发一行工具标记（如 [搜索 关键词]）。关掉后只看到模型的话"),
     ];
 
     // 名字关键词正则（由设置构建，热更新）
@@ -350,6 +350,8 @@ public sealed class ChatPlugin : IBotPlugin
     // 段内上限 ~450 字；双换行/标点处断段；工具调用提示独立成条立即发送；末尾余量 flush 补发。
     // 全部发送经链式队列严格保序；flush 返回是否发送过任何内容（供回落补发完整答案判断）。
 
+    /// <summary>是否发送「工具调用提示行」（[工具名 参数]）。模型在工具调用前的文本始终会发；本开关只管那行标记。</summary>
+    private bool ToolNoticeEnabled => _ctx.GetSetting("NotifyToolCalls", true);
     private (AgentService.StreamEvent OnStream, Func<Task<bool>> Flush) MakeStreamer(bool isGroup, long targetId, long messageId, CancellationToken ct = default)
     {
         var gate = new object();
@@ -401,7 +403,14 @@ public sealed class ChatPlugin : IBotPlugin
                 if (ct.IsCancellationRequested) { buf.Clear(); return; } // 撤回：丢弃后续增量
                 if (kind == "tool")
                 {
-                    Enqueue(delta); // 工具调用提示：独立成条，立即发送
+                    // 工具调用前：先把模型到这一步为止输出的文本发出去（始终发，用户才知道它在干什么）；
+                    // 随后是否再发一条工具标记（[工具名 参数]）由设置「工具调用提示行」控制。
+                    if (buf.Length > 0)
+                    {
+                        Enqueue(buf.ToString());
+                        buf.Clear();
+                    }
+                    if (ToolNoticeEnabled) Enqueue(delta);
                     return;
                 }
                 buf.Append(delta);
