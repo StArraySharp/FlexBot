@@ -12,7 +12,9 @@ namespace FlexBot.OfficialBot;
 /// </summary>
 sealed class IdMap(string path)
 {
-    private readonly Dictionary<string, long> _forward = new(StringComparer.Ordinal);
+    // 键比较忽略大小写：同一 openid 在不同事件里可能给成大写或小写的 32 位十六进制
+    // （消息事件里 Author.Id 是大写，Guid.ToString("N") 是小写；不归一化会得到两个身份）
+    private readonly Dictionary<string, long> _forward = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<long, string> _back = new();
     private readonly Dictionary<long, long> _bound = new();     // 合成 id → 真实 QQ 号（!bind 绑定）
     private readonly Lock _gate = new();

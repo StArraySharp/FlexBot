@@ -17,6 +17,13 @@ class BotClient : OneBotClient, IBotApi, IBotTransport
     public string TransportName => "onebot";
     public Task DisconnectAsync() => CloseAsync();
 
+    // 官方通道专有的"指令面板 / 互动回调"能力：OneBot 链路没有对应物 ⇒ 返回 -1 且永不触发事件
+    public Task<int> SyncCommandPanelsAsync(IReadOnlyList<BotCommandSpec> commands, CancellationToken ct = default)
+        => Task.FromResult(-1);
+#pragma warning disable CS0067 // OneBot 通道不产生互动事件
+    public event Func<BotInteraction, Task>? OnInteraction;
+#pragma warning restore CS0067
+
     Task<ApiResult<long>> IBotApi.SendPrivateMsgAsync(long userId, object message)
     {
         Console.WriteLine($"[private→] {userId}: {MsgBrief(message)}");

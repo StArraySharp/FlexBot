@@ -41,7 +41,31 @@ var everConnected = false;
 client.OnConnectionStateChanged += (s, e) =>
 {
     Console.WriteLine($"[state] {e.OldState} -> {e.NewState} ({e.Message})");
-    if (e.NewState == ConnectionState.Connected) { everConnected = true; BotState.Connected = true; }
+    if (e.NewState == ConnectionState.Connected)
+    {
+        everConnected = true; BotState.Connected = true;
+
+        // 官方通道：连上后把命令同步成客户端可见的「指令」（OnlyAdmin 区分管理员）。
+        // 延迟几秒等网关 READY/会话就绪，失败只记日志不影响其它功能。
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(6));
+            try
+            {
+                var specs = new List<BotCommandSpec>
+                {
+                    new("plugin", "插件管理", "plugin [list|load|unload|reload] <名称>", true),
+                    new("help", "显示帮助", "help", false),
+                    new("bind", "官方通道身份绑定", "bind qq <QQ号> <控制台口令>", false),
+                };
+                foreach (var c in plugins.GetCommands())
+                    specs.Add(new BotCommandSpec(c.Name, c.Description, string.IsNullOrWhiteSpace(c.Usage) ? c.Name : c.Usage, true));
+                var n = await client.SyncCommandPanelsAsync(specs);
+                if (n >= 0) Console.WriteLine($"[official] 指令同步完成：{n} 条（其中仅管理员 {specs.Count(s => s.OnlyAdmin)} 条）");
+            }
+            catch (Exception ex) { Console.WriteLine($"[official] 指令同步失败: {ex.Message}"); }
+        });
+    }
     if (e.NewState == ConnectionState.Disconnected) BotState.Connected = false;
     // 断线自动重连（NapCat 重启等场景；仅首次连接成功后介入，避免与启动重试循环叠加）
     if (e.NewState == ConnectionState.Disconnected && everConnected
@@ -82,6 +106,22 @@ client.OnGroupLuckyKing += (s, e) => _ = events.RaiseAsync<GroupLuckyKingEventAr
 client.OnGroupHonor += (s, e) => _ = events.RaiseAsync<GroupHonorEventArgs>(e);
 client.OnHeartbeat += (s, e) => _ = events.RaiseAsync<HeartbeatEventArgs>(e);
 client.OnConnectionStateChanged += (s, e) => _ = events.RaiseAsync<ConnectionStateChangedEventArgs>(e);
+
+// ---- 官方通道：客户端「指令/按钮」互动 → 复用同一套命令派发（含管理员判定） ----
+client.OnInteraction += async i =>
+{
+    try
+    {
+        var prefix = CurrentPrefix();
+        var text = (i.Text ?? "").Trim();
+        if (!text.StartsWith(prefix, StringComparison.Ordinal)) text = prefix + text;   // 按钮 data 可能不带前缀
+        var isAdmin = i.UserId > 0 && config.AdminUins.Contains(i.UserId);
+        Console.WriteLine($"[互动] {(i.IsGroup ? "群" + i.GroupId : "私聊")} {i.UserId} 指令 \"{text}\" 管理员={isAdmin}");
+        await TryDispatchCommandAsync(text, isAdmin,
+            r => i.IsGroup ? client.SendGroupMsgAsync(i.GroupId ?? 0, r) : client.SendPrivateMsgAsync(i.UserId, r));
+    }
+    catch (Exception ex) { Console.WriteLine($"[互动] 处理失败: {ex.Message}"); }
+};
 
 // ---- 私聊（仅管理员）：宿主级 !plugin 命令 + 注册命令分发，其余分发给插件 ----
 client.OnPrivateMessage += (s, e) => _ = HandlePrivateAsync(e);

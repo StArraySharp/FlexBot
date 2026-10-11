@@ -80,14 +80,18 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
 
         var cfg = new QQBotSocketConfig
         {
-            // 群@消息 + 单聊消息（1<<25 GroupAndC2CEvent）
-            GatewayIntents = GatewayIntents.GroupAndC2CEvent,
+            // 群@消息 + 单聊消息（1<<25 GroupAndC2CEvent）+ 互动事件（1<<26 INTERACTION，指令/按钮回调用）
+            GatewayIntents = GatewayIntents.GroupAndC2CEvent | GatewayIntents.Interaction,
             AccessEnvironment = _opt.Sandbox ? AccessEnvironment.Sandbox : AccessEnvironment.Production,
             LogLevel = LogSeverity.Warning,
+            // 互动响应由我们自己发（官方要求 3 秒内响应一次且只能响应一次），故关掉库的自动 ack
+            AutoAcknowledgeInteractions = false,
         };
         var c = new QQBotSocketClient(cfg);
         c.Log += OnLogAsync;
         c.MessageReceived += OnMessageReceivedAsync;
+        c.InteractionCreated += OnInteractionAsync;
+        c.ButtonExecuted += OnInteractionAsync;
         c.JoinedGroup += (g, _) =>
         {
             // 群通道的构造函数是 internal，只能从事件里拿到；这里缓存住，主动发消息才有通道可用
@@ -213,6 +217,14 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
             };
 
             if (!isGroup) mo.MessageSegments.Add(new MessageSegmentData { Type = "text", Data = { ["text"] = "" } });   // 与 OneBot 形状保持一段文本
+
+            // 通道缓存同时登记"解析后的身份"（绑过 QQ 号就是 QQ 号），与插件调用 SendXxxAsync 传的 id 对齐
+            var resolvedKey = isGroup ? (mo.GroupId ?? 0) : userId;
+            if (resolvedKey != 0 && resolvedKey != chanId)
+            {
+                _channels[resolvedKey] = m.Channel!;
+                if (m is IUserMessage um2) _lastInbound[resolvedKey] = um2;
+            }
             Log($"[{(isGroup ? "群" : "私聊")}←{chanId}] {userId}: {Shorten(text)}");
 
             OnMessage?.Invoke(this, new MessageEventArgs { Message = mo });
@@ -223,7 +235,166 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
         return Task.CompletedTask;
     }
 
-    // ===================== 出站：IBotApi =====================
+    // ===================== 指令面板 + 互动回调 =====================
+
+    public event Func<BotInteraction, Task>? OnInteraction;
+
+    /// <summary>把命令注册成官方「指令面板」。官方对条目数有上限（超了报 30013 超出数量限制），
+    /// 所以这里：先查平台已有面板（有则 Modify 而非 Create）→ 上限未知时减半重试实测出来 → 记住达标条数供下次直接用。</summary>
+    public async Task<int> SyncCommandPanelsAsync(IReadOnlyList<BotCommandSpec> commands, CancellationToken ct = default)
+    {
+        if (_client is null) return -1;
+        var all = commands
+            .Where(c => !string.IsNullOrWhiteSpace(c.Name))
+            .Select(c => CommandPanelItem.CreateCommand(
+                c.Name.Length > 20 ? c.Name[..20] : c.Name,
+                string.IsNullOrWhiteSpace(c.Description) ? (c.Usage ?? "") : c.Description,
+                c.OnlyAdmin))
+            .ToList();
+        if (all.Count == 0) return 0;
+
+        var state = LoadPanelState();
+        var total = 0;
+
+        foreach (var scope in new[] { CommandPanelScope.C2C, CommandPanelScope.Group })
+        {
+            var key = scope.ToString();
+
+            // 平台侧已有面板？（能 Modify 就不新建，避免版本堆积）
+            ICommandPanel? existing = null;
+            try
+            {
+                await foreach (var page in _client.GetCommandPanelsAsync(scope, options: null))
+                {
+                    foreach (var pl in page)
+                    {
+                        existing = pl;
+                        Log($"指令面板 {key}：平台已有 v{pl.Version}（{pl.Items.Count} 条），走更新路径");
+                        break;
+                    }
+                    if (existing is not null) break;
+                }
+                if (existing is null) Log($"指令面板 {key}：平台侧暂无面板，走创建路径");
+            }
+            catch (Exception ex) { Log($"指令面板 {key}：列举失败 {ex.Message}（库的列举接口与当前 API 不匹配，改用记录的 id 单取）"); }
+
+            // 列举接口不可用时的绕行：用上次记录的 id 单取面板，能拿到就 Modify 而不是反复 Create
+            if (existing is null && state.TryGetValue(key, out var st1) && st1.Id is { Length: > 0 } knownId)
+            {
+                try
+                {
+                    existing = await _client.GetCommandPanelAsync(knownId, options: null);
+                    if (existing is not null) Log($"指令面板 {key}：按 id 取到 v{existing.Version}（{existing.Items.Count} 条），走更新路径");
+                }
+                catch (Exception ex) { Log($"指令面板 {key}：按 id 单取失败 {ex.Message}，将尝试创建"); }
+            }
+
+            var cap = state.TryGetValue(key, out var st0) && st0.Cap > 0 ? st0.Cap : Math.Min(20, all.Count);
+            var take = Math.Min(cap, all.Count);
+
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+                var items = all.Take(take).ToList();
+                try
+                {
+                    if (existing is not null)
+                    {
+                        await existing.ModifyAsync(items, _ => { }, options: null);
+                        Log($"指令面板 {key} 已更新：{items.Count} 条（仅管理员 {items.Count(i => i.OnlyAdmin)} 条）");
+                    }
+                    else
+                    {
+                        var created = await _client.CreateCommandPanelAsync(scope, items, _ => { }, options: null);
+                        Log($"指令面板 {key} 已创建：v{created.Version}，{items.Count} 条（仅管理员 {items.Count(i => i.OnlyAdmin)} 条）");
+                        existing = created;
+                    }
+                    state[key] = new PanelState { Id = existing.Id, Cap = take };
+                    total += items.Count;
+                    if (take < all.Count)
+                        Log($"指令面板 {key}：受平台上限所限只放 {take}/{all.Count} 条（其余命令仍可用「前缀+命令名」直接发）");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    if (take > 1 && ex.Message.Contains("30013"))
+                    {
+                        take = Math.Max(1, take / 2);
+                        Log($"指令面板 {key}：超限（30013），减半重试 → {take} 条");
+                        continue;
+                    }
+                    Log($"指令面板 {key} 注册失败: {ex.Message}");
+                    break;
+                }
+            }
+        }
+        SavePanelState(state);
+        return total;
+    }
+
+    private sealed class PanelState { public string Id { get; set; } = ""; public int Cap { get; set; } }
+    private string PanelStatePath => Path.Combine(_opt.MemoryDir, "official", "panels.json");
+
+    private Dictionary<string, PanelState> LoadPanelState()
+    {
+        try
+        {
+            if (File.Exists(PanelStatePath))
+                return JsonSerializer.Deserialize<Dictionary<string, PanelState>>(File.ReadAllText(PanelStatePath)) ?? [];
+        }
+        catch { }
+        return [];
+    }
+
+    private void SavePanelState(Dictionary<string, PanelState> s)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(PanelStatePath)!);
+            File.WriteAllText(PanelStatePath, JsonSerializer.Serialize(s, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch { }
+    }
+
+    private async Task OnInteractionAsync(SocketInteraction i)
+    {
+        try
+        {
+            if (i is null) return;
+            // InteractionCreated 与 ButtonExecuted 可能对同一次互动都触发：按互动 id 去重，避免重复派发/回复
+            if (!string.IsNullOrEmpty(i.Id) && !_seenInteractions.TryAdd(i.Id, 0)) return;
+
+            // 官方要求：type=11 消息按钮 / type=12 快捷菜单 必须在 3 秒内响应，且一个 id 只能响应一次
+            if (!i.HasResponded)
+            {
+                try { await i.AcknowledgeAsync(InteractionResponseCode.Success, options: null); }
+                catch (Exception ex) { Log($"互动响应失败: {ex.Message}"); }
+            }
+
+            var isGroup = i.ChatType == InteractionChatType.Group || i.GroupOpenId is not null;
+            var openId = (isGroup ? i.GroupMemberOpenId : i.UserOpenId) ?? i.UserOpenId ?? i.GroupMemberOpenId;
+            var userId = openId is { } oid ? _ids.Resolve(_ids.ToLong("u:" + oid.ToString("N"))) : 0;
+            long? groupId = isGroup && i.GroupOpenId is { } go ? _ids.Resolve(_ids.ToLong("g:" + go.ToString("N"))) : null;
+
+            // 缓存通道与这次互动（按"解析后的身份"为键，和插件调用 SendXxxAsync 时传的 id 一致）
+            if (i.Channel is not null)
+            {
+                if (groupId is { } gid) { _channels[gid] = i.Channel; _lastInteraction[gid] = i; }
+                if (userId > 0 && !isGroup) { _channels[userId] = i.Channel; _lastInteraction[userId] = i; }
+            }
+
+            var text = (i.ButtonData ?? i.ButtonId ?? "").Trim();
+            Log($"[互动] 类型={i.Type} 场景={(isGroup ? "群" : "单聊")} 用户={userId} data=\"{Shorten(text)}\"");
+            if (text.Length == 0) return;
+            if (OnInteraction is not null) await OnInteraction(new BotInteraction(text, userId, groupId, isGroup, i.Id));
+        }
+        catch (Exception ex) { Log($"处理互动失败: {ex.Message}"); }
+    }
+
+    /// <summary>最近的互动（按会话缓存）：回复时优先用它，等于走被动回复窗口</summary>
+    private readonly ConcurrentDictionary<long, SocketInteraction> _lastInteraction = new();
+    /// <summary>已处理过的互动 id（两个事件可能对同一次互动都触发）</summary>
+    private readonly ConcurrentDictionary<string, byte> _seenInteractions = new();
 
     public Task<ApiResult<long>> SendGroupMsgAsync(long groupId, object message) => SendAsync(groupId, message, isGroup: true);
 
@@ -243,6 +414,20 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
             var (content, dropped) = RenderMessage(message);
             if (string.IsNullOrWhiteSpace(content)) return ApiResult<long>.Fail("官方通道：消息内容为空");
             if (dropped.Count > 0) Log($"官方通道：已丢弃不支持的段 [{string.Join(", ", dropped)}]（一期只发纯文本）");
+
+            // 若这条会话刚发生过互动（点按钮/快捷菜单），优先用互动接口回复 = 走被动回复窗口，不吃主动消息额度
+            if (_lastInteraction.TryGetValue(targetId, out var inter))
+            {
+                try
+                {
+                    var sentViaInteraction = await inter.SendMessageAsync(
+                        content, markdown: null, attachment: null, embed: null, ark: null, keyboard: null,
+                        messageReference: null, options: null);
+                    Log($"[{(isGroup ? "群" : "私聊")}→{targetId}·互动回复] {Shorten(content)}");
+                    return ApiResult<long>.Ok(SyntheticMsgId(sentViaInteraction?.Id));
+                }
+                catch (Exception ex) { Log($"互动回复失败，回退普通发送: {ex.Message}"); }
+            }
 
             var passive = _lastInbound.TryGetValue(targetId, out var src) ? src : null;
             var sent = await ch.SendMessageAsync(

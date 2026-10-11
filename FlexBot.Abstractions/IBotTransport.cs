@@ -27,6 +27,14 @@ public interface IBotTransport : IBotApi, IAsyncDisposable
     /// <summary>主动断开（供 WebUI 的"断开"按钮使用）</summary>
     Task DisconnectAsync();
 
+    // ---------------- 官方通道的指令/互动（OneBot 通道不实现：返回 -1 且永不触发事件） ----------------
+
+    /// <summary>把命令注册成官方「指令/快捷菜单」。返回注册的指令条数；-1 = 该通道不支持。</summary>
+    Task<int> SyncCommandPanelsAsync(IReadOnlyList<BotCommandSpec> commands, CancellationToken ct = default);
+
+    /// <summary>互动回调：用户在客户端点了消息按钮 / 快捷菜单 / 指令。OneBot 通道永不触发。</summary>
+    event Func<BotInteraction, Task>? OnInteraction;
+
     // ---------------- 入站事件（与 OneBotClient 同名同型） ----------------
 
     event EventHandler<MessageEventArgs>? OnMessage;
