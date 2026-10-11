@@ -77,6 +77,7 @@ for rid in "${TARGETS[@]}"; do
   # 包内附使用者说明；仓库若有 LICENSE 也一起带上（许可协议明确时自动生效）
   cp "$REPO/使用说明.txt" "$out/使用说明.txt"
   [ -f "$REPO/LICENSE" ] && cp "$REPO/LICENSE" "$out/LICENSE"
+  [ -f "$REPO/THIRD-PARTY-NOTICES.txt" ] && cp "$REPO/THIRD-PARTY-NOTICES.txt" "$out/THIRD-PARTY-NOTICES.txt"
   zip_dir "$out" "$OUT_ROOT/FlexBot-${VER}-${rid}.zip"
   echo "  -> FlexBot-${VER}-${rid}.zip"
   report="${report}$(basename "$out") $(du -sm "$out" | cut -f1)MB->$(du -m "$OUT_ROOT/FlexBot-${VER}-${rid}.zip" | cut -f1)MB\n"
@@ -93,6 +94,7 @@ done
 find "$plug_root" -type f \( -name 'FlexBot.dll' -o -name 'FlexBot.exe' -o -name 'FlexBot.Abstractions.dll' \
   -o -name 'OneBotLib.dll' -o -name 'Photino.NET.dll' -o -name '*.pdb' \) -delete
 find "$plug_root" -type d \( -name 'libs' -o -name '.cache' -o -name 'backups' \) -exec rm -rf {} + 2>/dev/null || true
+cp "$REPO/THIRD-PARTY-NOTICES.txt" "$plug_root/THIRD-PARTY-NOTICES.txt"
 rm -f "$plug_root"/plugins/*/config.json "$plug_root"/plugins/*/settings.json
 plug_unzip_mb=$(du -sm "$plug_root" | cut -f1)
 zip_dir "$plug_root" "$OUT_ROOT/FlexBot-BuiltInPlugins-${VER}.zip"
