@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using FlexBot;
 using FlexBot.PluginApi;
 using FlexBot.WebUi;
@@ -17,7 +17,18 @@ Console.SetOut(new TimestampWriter(_origOut));
 
 var settings = HostSettings.Load();
 var config = new HostConfig(settings);
-var client = new BotClient();
+// 通道选择：默认 onebot（LLBot/NapCat）；配 Transport=official 走 QQ 官方机器人开放平台。
+// 两条通道实现同一个界面（事件形状 + IBotApi），下面的接线、路由、权限、插件派发全部无感。
+IBotTransport client = settings.Transport.Equals("official", StringComparison.OrdinalIgnoreCase)
+    ? new FlexBot.OfficialBot.OfficialTransport(new FlexBot.OfficialBot.OfficialTransportOptions
+    {
+        AppId = settings.OfficialAppId,
+        AppSecret = settings.OfficialAppSecret,
+        Sandbox = settings.OfficialSandbox,
+        MemoryDir = settings.MemoryDir,
+    })
+    : new BotClient();
+Console.WriteLine($"[boot] 机器人通道: {client.TransportName}");
 var messages = new MessageRouter();
 var events = new EventRouter();
 var plugins = new PluginManager(client, config, messages, events, settings);
@@ -273,7 +284,7 @@ async Task RunBotAsync()
     while (Console.ReadLine() is not null) { }
     await Task.Delay(Timeout.InfiniteTimeSpan);
 
-    await client.CloseAsync();
+    await client.DisconnectAsync();
     Console.WriteLine("[+] Closed.");
 }
 

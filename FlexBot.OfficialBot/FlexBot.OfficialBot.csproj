@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- QQ 官方机器人开放平台的 .NET 封装（MIT）：token/网关/intents/心跳/resume/msg_seq/限流队列都由它负责 -->
+    <PackageReference Include="QQBot.Net" Version="0.2.0" />
+    <ProjectReference Include="..\FlexBot.Abstractions\FlexBot.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

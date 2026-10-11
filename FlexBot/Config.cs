@@ -39,6 +39,19 @@ class HostSettings
 {
     public string WsUrl { get; set; } = BotConfig.WsUrl;
     public string Token { get; set; } = BotConfig.Token;
+
+    /// <summary>机器人通道："onebot"（LLBot/NapCat，默认；功能最全）或 "official"（QQ 官方机器人开放平台，合规但能力是子集）。同一时刻只启用一个。</summary>
+    public string Transport { get; set; } = "onebot";
+
+    /// <summary>官方通道：开放平台的 AppID（机器人身份）</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("OfficialAppId")]
+    public string OfficialAppId { get; set; } = "";
+    /// <summary>官方通道：开放平台的 AppSecret（等同机器人密码，勿泄露）。token 由库里自行获取与刷新。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("OfficialAppSecret")]
+    public string OfficialAppSecret { get; set; } = "";
+    /// <summary>官方通道：true=沙箱环境，false=正式环境</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("OfficialSandbox")]
+    public bool OfficialSandbox { get; set; } = true;
     /// <summary>全局命令前缀（消息以该前缀开头才会进入命令分发；默认 "!"）。</summary>
     public string CommandPrefix { get; set; } = "!";
 

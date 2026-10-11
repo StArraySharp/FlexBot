@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using FlexBot.PluginApi;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -41,7 +42,7 @@ static class WebUi
     private static readonly string SessionToken = Convert.ToHexString(Guid.NewGuid().ToByteArray())
         .ToLowerInvariant();
 
-    public static string Start(PluginManager plugins, HostSettings settings, BotClient client, ProcessManager procs)
+    public static string Start(PluginManager plugins, HostSettings settings, IBotTransport client, ProcessManager procs)
     {
         var port = GetPort(settings.WebUiPort);
         // WebUI 固定绑定全部网卡（0.0.0.0，公网可达），对外暴露请设置 WebUiPassword
@@ -538,7 +539,7 @@ static class WebUi
             var wsChanged = settings.WsUrl != oldWs || settings.Token != oldToken;
             if (wsChanged && BotState.Connected)
             {
-                try { await client.CloseAsync(); } catch { }
+                try { await client.DisconnectAsync(); } catch { }
             }
             // 保存时仍未连接：无论配置是否变化都立即尝试连接（刚把 NapCat 拉起来/改完地址的场景）
             if (!BotState.Connected)

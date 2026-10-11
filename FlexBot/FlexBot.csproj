@@ -24,6 +24,7 @@
          宿主与插件都只共享这一份契约，插件不再引用宿主 exe -->
     <ProjectReference Include="..\FlexBot.Abstractions\FlexBot.Abstractions.csproj" />
     <ProjectReference Include="..\FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" />
+    <ProjectReference Include="..\FlexBot.OfficialBot\FlexBot.OfficialBot.csproj" />
   </ItemGroup>
 
   <ItemGroup>

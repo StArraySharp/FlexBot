@@ -7,11 +7,15 @@ using OneBotClient = OneBotLib.Api.OneBotClient;
 
 namespace FlexBot;
 
-// 继承 OneBotLib 暴露通用 API 调用，同时实现插件可见的 IBotApi 接口
+// 继承 OneBotLib 暴露通用 API 调用，同时实现插件可见的 IBotApi 与宿主侧传输接口 IBotTransport
 // （基类方法带 autoEscape 可选参数，不能隐式满足接口签名，故显式实现）
-class BotClient : OneBotClient, IBotApi
+class BotClient : OneBotClient, IBotApi, IBotTransport
 {
     public long SelfId => CurrentAccountInfo?.UserId ?? 0;
+
+    // ---- IBotTransport：OneBot 通道 ----
+    public string TransportName => "onebot";
+    public Task DisconnectAsync() => CloseAsync();
 
     Task<ApiResult<long>> IBotApi.SendPrivateMsgAsync(long userId, object message)
     {

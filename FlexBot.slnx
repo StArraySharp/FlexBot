@@ -2,6 +2,7 @@
   <Project Path="FlexBot\FlexBot.csproj" />
   <Project Path="FlexBot.Abstractions\FlexBot.Abstractions.csproj" />
   <Project Path="FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" />
+  <Project Path="FlexBot.OfficialBot\FlexBot.OfficialBot.csproj" />
   <Folder Name="/FlexBot.BuiltInPlugins/">
     <Project Path="FlexBot.BuiltInPlugins\RedPacketWatch\RedPacketWatch.csproj" />
     <Project Path="FlexBot.BuiltInPlugins\Admin\Admin.csproj" />
