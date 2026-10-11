@@ -1,9 +1,10 @@
 # 手动触发的发布打包
 #
 # 用法：仓库 → Actions → 「发布打包」 → Run workflow → 填版本号 → 运行
-# 产物：5 个平台自包含包（win64 / linux x64 / linux arm64 / macos x64 / macos arm64）
-#      + FlexBot_BuiltInPlugins.zip（平台无关，条目带 plugins/ 前缀，WebUI「添加插件」可一次装多个）
-# 同时可作为 workflow 产物下载；勾选 create_release 时还会建一个 v<版本> 的 Release 并附上这些 zip。
+# 产物：5 个平台自包含包（RID 命名：win-x64 / linux-x64 / linux-arm64 / osx-x64 / osx-arm64）
+#      + FlexBot-BuiltInPlugins-<版本>.zip（平台无关，条目带 plugins/ 前缀，WebUI 一次可装多个）
+#      + SHA256SUMS.txt（校验用）
+# 勾选 create_release 时会创建/更新 v<版本> Release，正文取 RELEASE_NOTES.md（替换 <VERSION> 占位）。
 name: 发布打包
 
 on:
@@ -15,7 +16,7 @@ on:
         default: "1.0.0"
         type: string
       create_release:
-        description: 同时创建 GitHub Release 并上传产物（已存在同名 Release 则覆盖附件）
+        description: 同时创建 GitHub Release 并上传产物（已存在同名 Release 则覆盖附件并更新正文）
         required: true
         default: true
         type: boolean
@@ -42,7 +43,10 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: 打包（宿主 5 个平台 + 内置插件包）
+      - name: 生成 Release 正文（替换版本占位）
+        run: sed "s/<VERSION>/$VERSION/g" RELEASE_NOTES.md > "$RUNNER_TEMP/notes.md"
+
+      - name: 打包（宿主 5 个平台 + 内置插件包 + 校验文件）
         # 用 bash 显式调用：仓库在 Windows 上提交时可能没带上可执行位
         run: bash release.sh "$VERSION" "$OUT_DIR"
 
@@ -53,7 +57,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: FlexBot-${{ inputs.version }}
-          path: ${{ env.OUT_DIR }}/*.zip
+          path: |
+            ${{ env.OUT_DIR }}/*.zip
+            ${{ env.OUT_DIR }}/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: 创建或更新 Release
@@ -62,10 +68,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          ASSETS=("$OUT_DIR"/*.zip "$OUT_DIR/SHA256SUMS.txt")
           if gh release view "v$VERSION" >/dev/null 2>&1; then
-            echo "Release v$VERSION 已存在，覆盖附件"
-            gh release upload "v$VERSION" "$OUT_DIR"/*.zip --clobber
+            echo "Release v$VERSION 已存在：覆盖附件 + 更新正文"
+            gh release upload "v$VERSION" "${ASSETS[@]}" --clobber
+            gh release edit "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
           else
-            gh release create "v$VERSION" --title "FlexBot $VERSION" --generate-notes "$OUT_DIR"/*.zip
+            gh release create "v$VERSION" --title "FlexBot $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md" "${ASSETS[@]}"
           fi
           gh release view "v$VERSION" --json url,tagName,assets

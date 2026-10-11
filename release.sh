@@ -5,12 +5,12 @@
 #   ./release.sh [版本号] [输出根目录]
 #
 # 产物（默认落在 publish/release/<版本>/）：
-#   FlexBot_<版本>_win64.zip            win-x64        ┐
-#   FlexBot_<版本>_linux_x64.zip        linux-x64      │ 只有宿主 + .NET 运行时
-#   FlexBot_<版本>_linux_arm64.zip      linux-arm64    │ （自包含，无需另装 .NET）
-#   FlexBot_<版本>_macos_x64.zip        osx-x64        │ 不带 plugins/，宿主首次运行自动创建
-#   FlexBot_<版本>_macos_arm64.zip      osx-arm64      ┘
-#   FlexBot_BuiltInPlugins.zip          8 个内置插件（平台无关；条目带 plugins/ 前缀，
+#   FlexBot-<版本>-win-x64.zip          win-x64        ┐
+#   FlexBot-<版本>-linux-x64.zip        linux-x64      │ 只有宿主 + .NET 运行时
+#   FlexBot-<版本>-linux-arm64.zip      linux-arm64    │ （自包含，无需另装 .NET）
+#   FlexBot-<版本>-osx-x64.zip          osx-x64        │ 不带 plugins/，宿主首次运行自动创建
+#   FlexBot-<版本>-osx-arm64.zip        osx-arm64      ┘
+#   FlexBot-BuiltInPlugins-<版本>.zip   8 个内置插件（平台无关；条目带 plugins/ 前缀，
 #                                       在 WebUI「添加插件」里选它可一次装多个，或解压覆盖）
 #
 # 注意：宿主与插件是两个发布图——宿主 publish 不会带上 plugins/，插件必须各自 publish；
@@ -29,7 +29,7 @@ DOTNET="${DOTNET:-dotnet}"
 command -v "$DOTNET" >/dev/null 2>&1 || { echo "错误：找不到 dotnet" >&2; exit 1; }
 
 PLUGINS=(Admin Agent AOnline FileSystem PCControl PluginApi PluginBuilder RedPacketWatch)
-TARGETS=(win64:win-x64 linux_x64:linux-x64 linux_arm64:linux-arm64 macos_x64:osx-x64 macos_arm64:osx-arm64)
+TARGETS=(win-x64 linux-x64 linux-arm64 osx-x64 osx-arm64)
 # Roslyn 的本地化诊断资源：只保留 zh-Hans，其余删掉（报错回落英文）
 DROP_LANGS=(cs de es fr it ja ko pl pt-BR ru tr zh-Hant)
 
@@ -61,10 +61,9 @@ mkdir -p "$OUT_ROOT"
 cd "$REPO"
 
 report=""
-for t in "${TARGETS[@]}"; do
-  tag="${t%%:*}"; rid="${t##*:}"
-  out="$OUT_ROOT/$tag"
-  echo "=== $tag ($rid) ==="
+for rid in "${TARGETS[@]}"; do
+  out="$OUT_ROOT/$rid"
+  echo "=== $rid ==="
   rm -rf "$out"; mkdir -p "$out"
 
   publish_host "$rid" "$out"
@@ -75,13 +74,16 @@ for t in "${TARGETS[@]}"; do
   find "$out" -type f -name '*.pdb' -delete
   for l in "${DROP_LANGS[@]}"; do rm -rf "${out:?}/$l"; done
 
-  zip_dir "$out" "$OUT_ROOT/FlexBot_${VER}_${tag}.zip"
-  echo "  -> FlexBot_${VER}_${tag}.zip"
-  report="${report}$(basename "$out") $(du -sm "$out" | cut -f1)MB->$(du -m "$OUT_ROOT/FlexBot_${VER}_${tag}.zip" | cut -f1)MB\n"
+  # 包内附使用者说明；仓库若有 LICENSE 也一起带上（许可协议明确时自动生效）
+  cp "$REPO/使用说明.txt" "$out/使用说明.txt"
+  [ -f "$REPO/LICENSE" ] && cp "$REPO/LICENSE" "$out/LICENSE"
+  zip_dir "$out" "$OUT_ROOT/FlexBot-${VER}-${rid}.zip"
+  echo "  -> FlexBot-${VER}-${rid}.zip"
+  report="${report}$(basename "$out") $(du -sm "$out" | cut -f1)MB->$(du -m "$OUT_ROOT/FlexBot-${VER}-${rid}.zip" | cut -f1)MB\n"
 done
 
 # ---- 内置插件包（平台无关）----
-echo "=== FlexBot_BuiltInPlugins.zip ==="
+echo "=== FlexBot-BuiltInPlugins-${VER}.zip ==="
 plug_root="$OUT_ROOT/.plug"
 rm -rf "$plug_root"; mkdir -p "$plug_root/plugins"
 for p in "${PLUGINS[@]}"; do
@@ -93,10 +95,18 @@ find "$plug_root" -type f \( -name 'FlexBot.dll' -o -name 'FlexBot.exe' -o -name
 find "$plug_root" -type d \( -name 'libs' -o -name '.cache' -o -name 'backups' \) -exec rm -rf {} + 2>/dev/null || true
 rm -f "$plug_root"/plugins/*/config.json "$plug_root"/plugins/*/settings.json
 plug_unzip_mb=$(du -sm "$plug_root" | cut -f1)
-zip_dir "$plug_root" "$OUT_ROOT/FlexBot_BuiltInPlugins.zip"
-plug_zip_mb=$(du -m "$OUT_ROOT/FlexBot_BuiltInPlugins.zip" | cut -f1)
+zip_dir "$plug_root" "$OUT_ROOT/FlexBot-BuiltInPlugins-${VER}.zip"
+plug_zip_mb=$(du -m "$OUT_ROOT/FlexBot-BuiltInPlugins-${VER}.zip" | cut -f1)
 rm -rf "$plug_root"
-echo "  -> FlexBot_BuiltInPlugins.zip"
+echo "  -> FlexBot-BuiltInPlugins-${VER}.zip"
+
+# ---- 校验文件（供用户核对下载完整性）----
+if command -v sha256sum >/dev/null 2>&1; then
+  ( cd "$OUT_ROOT" && sha256sum *.zip > SHA256SUMS.txt )
+elif command -v shasum >/dev/null 2>&1; then
+  ( cd "$OUT_ROOT" && shasum -a 256 *.zip > SHA256SUMS.txt )
+fi
+[ -f "$OUT_ROOT/SHA256SUMS.txt" ] && { echo; echo "  -> SHA256SUMS.txt"; sed 's/^/     /' "$OUT_ROOT/SHA256SUMS.txt"; }
 
 echo
 echo "=== 汇总（解压后 -> zip）==="

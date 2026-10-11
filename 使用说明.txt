@@ -1,0 +1,29 @@
+FlexBot 使用说明
+================
+
+一、运行（自包含包，无需另装 .NET）
+  Windows : 解压后双击 FlexBot.exe
+  Linux   : chmod +x FlexBot && ./FlexBot
+  macOS   : xattr -dr com.apple.quarantine FlexBot && ./FlexBot
+            （包未签名/未公证，不去隔离会被 Gatekeeper 拦下）
+
+二、首次配置
+  1. 启动后控制台会打印 WebUI 地址，以及一个随机登录密码（明文只在控制台显示一次，不进日志）
+  2. 浏览器打开该地址登录 → 设置页填「主人 QQ」（必填，拥有最高权限）
+  3. 建议顺手设置自己的「登录密码」（留空则每次启动自动生成随机密码）
+  4. 通道：默认 onebot（LLBot / NapCat）；也可切到「QQ 官方机器人开放平台」（填 AppID / AppSecret，
+     官方通道能力是前者的子集，且首次使用需要先在 QQ 里执行一次身份绑定）
+
+三、安装插件
+  本包**不含 plugins/**（宿主首次启动会自动创建空目录）。插件在另一个文件里：
+  FlexBot-BuiltInPlugins-<版本>.zip
+    · 推荐：WebUI → 插件页 → 添加插件（选该 zip）→ 一次可装多个
+    · 或：把 zip 里的 plugins/ 目录直接解压到宿主同级目录
+  注意：Agent 插件首次加载会因缺少 ApiKey 而失败，这是预期行为 ——
+        先在它的「设置」里填好模型 ApiKey / BaseUrl / Model，再点加载。
+
+四、注意事项
+  · WebUI 默认监听 0.0.0.0（局域网可达），不要把端口直接暴露到公网
+  · 运行期数据都在宿主目录下的 memory/（含插件配置、记忆、身份绑定表）与 logs/
+  · 升级时保留 memory/ 与 logs/ 两个目录即可，其余文件覆盖即可
+  · 内置插件包与宿主是两条发布线，包名里都带版本号，别混用太老/太新的组合
