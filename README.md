@@ -48,48 +48,59 @@ init <名>  write <名> <相对路径>  create <名> <描述>  update <名>  com
 read <名>  readsrc <名> <相对路径>  log <名> [行数]  llm <名> [序号]  deps <名> <A,B>  list  delete <名>
 ```
 
-## 快速开始
+## 下载与运行
 
-### 前置
+### 1. 下载哪个
 
-- .NET 10 SDK
-- OneBot 11 实现（推荐 [NapCat](https://github.com/NapNeko/NapCatQQ)），开启正向 WebSocket 服务端（默认 `ws://127.0.0.1:3001`）
-- [LLBot](https://github.com/LLOneBot/LLOneBot)（可选）：另一 OneBot 实现，与 NapCat 二选一或并存；配置 `LLBotCmd` 后随宿主一键拉起，日志自动隔离到独立文件
+到 Releases 页面下载**两个**文件（都要下）：平台包 + 内置插件包。平台包已自包含 .NET 运行时，**不需要**另装 .NET。
 
-### 运行
+| 平台 | 平台包 |
+|---|---|
+| Windows x64 | `FlexBot-<版本>-win-x64.zip` |
+| Linux x64 / arm64 | `FlexBot-<版本>-linux-x64.zip` / `-linux-arm64.zip` |
+| macOS Intel / Apple Silicon | `FlexBot-<版本>-osx-x64.zip` / `-osx-arm64.zip` |
+| 内置插件（平台无关） | `FlexBot-BuiltInPlugins-<版本>.zip` |
+
+校验（可选）：`sha256sum -c SHA256SUMS.txt`；Windows 用 `certutil -hashfile <文件> SHA256` 逐个比对。
+
+### 2. 解压并运行
 
 ```bash
-git clone <本仓库>
-cd FlexBot
-dotnet run --project FlexBot
+# Windows：解压后双击 FlexBot.exe
+# Linux
+chmod +x FlexBot && ./FlexBot
+# macOS（包未签名，不去隔离会被 Gatekeeper 拦下）
+xattr -dr com.apple.quarantine FlexBot && ./FlexBot
 ```
 
-首次启动自动生成 `config.json`（exe 旁），按需修改后重启：
+### 3. 首次配置
 
-```jsonc
-{
-  "WsUrl": "ws://127.0.0.1:3001",   // OneBot WebSocket 地址
-  "Token": "",                       // OneBot 访问令牌（可为空）
-  "OwnerUin": 10000,                 // 机器人主人 QQ（自动具有管理员权限）；不填则视为"无管理员"，命令与私聊一律拒绝
-  "AdminUins": [],                   // 额外管理员（主人恒在其中，无需重复填写）
-  "NapCatCmd": "",                   // 可选：随宿主一键拉起 NapCat 的命令
-  "NuGetFeed": "https://api.nuget.org/v3-flatcontainer",  // 插件 NuGet 依赖源（可换私有源/镜像）
-  "WebUiPort": 0,                    // 0 = 自动分配空闲端口
-  "WebUiPassword": ""                // 留空则首次启动自动生成随机密码并打印到**控制台**（明文只打印一次，不写日志）；WebUI 绑定全部网卡，务必不要把端口暴露到公网
-}
-```
+1. 控制台会打印 **WebUI 地址**，以及一个**随机登录密码**（明文只打印这一次，不写日志）
+2. 浏览器打开该地址，用密码登录
+3. 设置页填「**主人 QQ**」（必填，权限最高；不填则所有命令与私聊一律拒绝），建议顺手设置自己的登录密码
+4. WebUI 默认监听 `0.0.0.0`（局域网可达）：**不要把端口直接暴露到公网**
 
-启动后控制台会打印 WebUI 地址（本机地址 `http://127.0.0.1:<端口>`；实际监听 `0.0.0.0`，局域网可达），浏览器打开即可管理。登录失败会按来源 IP 指数退避（前 2 次立即返回，之后 2/4/8… 秒，上限 5 分钟）。
+### 4. 安装插件
 
-### 模型配置
+平台包**不含 `plugins/`**（宿主首次启动会自动创建空目录）。插件在插件包里，两种装法：
 
-AI 模型配置在 WebUI → 插件 → Agent → 设置（存储于 `plugins/Agent/settings.json`，保存即热应用）：
+- 推荐：WebUI → 插件页 → **添加插件** → 选 `FlexBot-BuiltInPlugins-<版本>.zip`（一次装 8 个）
+- 或：把 zip 里的 `plugins/` 目录直接解压到宿主同级
 
-- **ApiKey / BaseUrl / Model**：任意 OpenAI 兼容端点（DeepSeek、智谱、OpenAI 等）
-- **FallbackModels**：主模型失败时按序回落的备用链
-- **Personas**：多套人格提示词，`personas/*.md` 随设置一并保存
-- **GroupChatEnabled**：群聊 AI 回复全局开关（单群粒度用 `!nollm <群号>`）
-- **NameKeywords / ReplyProbability / ImageReplyProbability**：唤醒词与概率回复
+> Agent 插件首次加载会因缺少 ApiKey 而失败，这是预期行为 —— 先在它的「设置」里填好模型信息再加载。
+
+### 5. 接入 QQ（通道二选一）
+
+在 WebUI 设置页的「连接 · 通道」里选择，保存后**重启生效**：
+
+| 通道 | 说明 |
+|---|---|
+| **OneBot**（默认） | 需要 [NapCat](https://github.com/NapNeko/NapCatQQ) 或 [LLBot](https://github.com/LLOneBot/LuckyLilliaBot) 提供正向 WebSocket（默认 `ws://127.0.0.1:3001`）；在设置里填好启动命令后，宿主可一键拉起并自动重连 |
+| **QQ 官方机器人开放平台** | 填 AppID / AppSecret（沙箱或正式环境）。官方接口能力是 OneBot 的子集，且用户身份是 openid，需要在 QQ 里执行一次 `!bind qq <QQ号> <控制台口令>` 完成绑定 |
+
+### 6. 配置 AI 模型（可选）
+
+AI 功能来自 **Agent 插件**：WebUI → 插件 → Agent → 设置，填 `ApiKey` / `BaseUrl` / `Model`（任意 OpenAI 兼容端点，如 DeepSeek、智谱），保存即热应用。没配模型时该插件按预期加载失败，其余功能不受影响。
 
 ## 命令速查
 
@@ -116,165 +127,34 @@ AI 模型配置在 WebUI → 插件 → Agent → 设置（存储于 `plugins/Ag
 
 宿主对**所有**插件注册命令统一做管理员校验（`Program.cs` 的命令分发），插件内部再对少数危险能力做二次判定；私聊消息仅管理员会被处理。
 
-## 插件开发
+## 常见问题
 
-### 一、脚本插件（免编译，推荐）
-
-把 `*.cs` 丢进 `plugins/<名称>/` 即可——宿主加载时用 Roslyn **在内存中编译**，改完执行
-`!plugin reload <名称>` 就生效，不需要 csproj、不需要 `dotnet build`、不需要重启。
-
-```
-plugins/天气/
-  main.cs         目录下全部 *.cs 参与编译（文件名随意，多文件/partial 都支持）
-  plugin.json     可选：Depends 依赖、Version、Description、Settings（WebUI 设置表单）、NuGet 依赖
-  libs/           第三方 DLL：由 plugin.json 的 NuGet 字段自动铺入，也可手工放置
-  settings.json   宿主写入（WebUI 保存设置）
-  .cache/         宿主写入：编译产物缓存 + NuGet 下载缓存（可安全删除）
-```
-
-第三方 NuGet 依赖只需在 `plugin.json` 写一行，宿主会在**加载插件时自动解析**（下载含传递依赖的包 →
-挑最合适的 `lib/{tfm}` 资产铺进 `libs/` → 编译期当引用、运行期由 ALC 从影子目录解析）：
-
-```json
-{ "NuGet": ["Newtonsoft.Json@13.0.4"] }
-```
-
-不需要 csproj、不需要 dotnet SDK、不需要任何外部脚本。手动触发：`!plugin nuget <插件名>`。
-依赖源可在 `config.json` 的 `NuGetFeed` 指定（默认官方 flat-container）。
-
-生成/改动历史：每个插件有一份追加式 `plugins/<名>/generation.log`（时间 / 来源 / 动作 / 结果 / 诊断），
-用 `!pb_build log <名>` 查看；`plugin.json` 的 `Build` 字段记录最近一次构建状态。
-插件加载失败时诊断会直接从 `!plugin load` 的回复里带出来（AI 走 `pb_create` 也能看到 CS 错误）。
-
-AI 生成审计：Agent 每次调 `pb_create` / `pb_update` 都会把**完整工具调用参数**（工具名、模型、调用者、
-群号、时间、同轮助手文本）与**本次实际参与编译的源码**归档为 `plugins/<名>/generation.llm.jsonl`，
-用 `!pb_build llm <名>` 看台账、`!pb_build llm <名> <序号>` 展开完整记录。
-`plugin.json` 的 `Provenance` 字段据此标注来源，WebUI 插件卡片上显示徽标：
-
-- `ai` → 「AI 生成」（tooltip 带模型名）
-- `manual` → 「手写」（由 pb_build 手工生成，有生成日志）
-- 无标注（内置插件 / 手工放入 / zip 安装）→ 不显示徽标
-
-```csharp
-// plugins/天气/main.cs
-using FlexBot.PluginApi;
-
-namespace 天气;
-
-public sealed class WeatherPlugin : IBotPlugin
-{
-    public string Name => "天气";
-    public string Version => "1.0.0";
-    public string Description => "问天气";
-
-    public Task OnLoadAsync(IBotContext ctx)
-    {
-        ctx.RegisterCommand("weather", "查天气", a => Task.FromResult($"天气：晴（{a}）"));
-        ctx.Messages.OnGroup(async e =>
-        {
-            if (!e.Message.PlainText.Contains("天气")) return Handled.Continue;
-            await ctx.Api.SendGroupMsgAsync(e.Message.GroupId ?? 0, "查一下…");
-            return Handled.Stop;
-        }, priority: 100, tag: Name);
-        return Task.CompletedTask;
-    }
-
-    public Task OnUnloadAsync() => Task.CompletedTask;   // 必须停掉自己起的一切后台活动
-}
-```
-
-隐式 using（脚本里无需重复写）：`System`、`System.Collections.Generic`、`System.IO`、`System.Linq`、
-`System.Net.Http`、`System.Threading`、`System.Threading.Tasks`。
-脚本只能看到 `FlexBot.Abstractions` 暴露的契约（宿主内部类型不可见），可用能力见
-`samples/csx-json/README.md`，或在聊天里用 `!pluginapi` 直接查契约源码。
-编译失败时诊断会精确到 `文件(行,列)`写进宿主日志，并从 `!plugin load` / `pb_build script` 的回复带出。
-
-不参与编译的目录：点开头的目录（如 `.cache/`）、`libs/`、`backups/`、`bin/`、`obj/`。
-
-### 二、编译型插件（DLL）
-
-需要第三方 NuGet、或想分发独立 dll 时使用：实现 `FlexBot.PluginApi.IBotPlugin`，输出到
-`plugins/<名称>/<名称>.dll` 即被自动发现。两类插件共用同一套加载/卸载/热重载机制；
-也可以交给插件工厂（`!pb_build init|write|create|update`，默认宿主内存编译，不需要 dotnet SDK）。
-
-```csharp
-using FlexBot.PluginApi;
-
-public sealed class MyPlugin : IBotPlugin
-{
-    public string Name => "MyPlugin";
-    public string Version => "1.0.0";
-    public string Description => "示例插件";
-
-    public Task OnLoadAsync(IBotContext ctx)
-    {
-        ctx.RegisterCommand("hello", "问好", _ => Task.FromResult("world"));
-        ctx.Messages.OnGroup(async e =>
-        {
-            await ctx.Api.SendGroupMsgAsync(e.Message.GroupId!.Value, "hi");
-            return Handled.Continue;
-        }, priority: 100, tag: Name);
-        return Task.CompletedTask;
-    }
-
-    public Task OnUnloadAsync() => Task.CompletedTask;
-}
-```
-
-csproj 模板（关键点：引用 `FlexBot.Abstractions` 且 `ExcludeAssets="runtime"` 不拷贝、输出到宿主 `plugins/`、自带 NuGet 依赖）：
-
-```xml
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>MyPlugin</RootNamespace>
-    <AssemblyName>MyPlugin</AssemblyName>
-    <OutDir>..\..\FlexBot\bin\$(Configuration)\net10.0\plugins\MyPlugin\</OutDir>
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-  </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="xxx" Version="x.y.z" />
-    <!-- 契约层：宿主与插件共享同一份程序集，运行时由 ALC 回落宿主，故不随插件拷贝 -->
-    <ProjectReference Include="..\..\FlexBot.Abstractions\FlexBot.Abstractions.csproj" ReferenceOutputAssembly="true" ExcludeAssets="runtime" />
-    <ProjectReference Include="..\..\FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" Private="false" />
-  </ItemGroup>
-</Project>
-```
-
-插件间依赖：在插件目录写 `plugin.json`：`{"Depends": ["FileSystem"]}`，加载时自动先载依赖并共享类型。
-
-`IBotContext` 能力：消息/事件订阅（`Messages`/`Events`）、OneBot API（`Api`）、配置与设置（`Config`/`GetSetting`）、
-定时器（`Scheduler`）、KV 存储（`KV`）、共享 HttpClient（`Http`）、跨插件命令调用（`TryInvokeCommandAsync`）、
-统一编译服务（`Compiler`，脚本与插件共用宿主那一个 Roslyn，不必自带编译器）。
-完整接口源码可用 `!pluginapi all`（或 `!pluginapi member IBotContext`）在线反编译查看。
-
-## 部署
-
-- Windows：直接运行 `FlexBot.exe`（含 Photino 桌面窗口模式）
-- Linux：`dotnet publish FlexBot -c Release -r linux-x64` 后运行 `dotnet FlexBot.dll`（仓库不带启动/守护脚本，按需自备 systemd unit 或 supervisor）
-- 发布包**必须带上 `WebUi/` 目录**（与 `FlexBot.dll` 同级）：WebUI 资源现在就放在那里，宿主每次请求都从磁盘读。缺了会在启动日志里逐条列出缺失文件，页面返回 500
-
-## 目录速览
-
-```
-FlexBot/
-├─ Program.cs / BotClient.cs / PluginManager.cs / Routing.cs / Config.cs
-├─ Scripting/            # csx 脚本编译前端（Roslyn 内存编译 + 指纹缓存）+ NuGet 依赖解析
-├─ WebUi/                # WebUI 源码（构建/发布时原样拷到 <输出>/WebUi/；改完刷新即生效）+ Minimal API
-└─ memory/               # 运行数据（构建后生成于输出目录 exe 旁）
-FlexBot.Abstractions/    # 插件契约（IBotPlugin、IBotContext、IBotApi、Hub、服务）
-FlexBot.OneBotLib/       # OneBot 11 协议库
-FlexBot.BuiltInPlugins/  # 内置插件源码
-samples/csx-json/        # csx 脚本插件示例（NuGet 依赖 + 生成审计）
-```
+- **页面白屏 / 500**：发布包缺少 `WebUi/` 目录（必须与 `FlexBot.dll` 同级）。启动日志会逐条列出缺失文件。
+- **忘了 WebUI 密码**：删掉 `config.json` 里的 `WebUiPassword` 后重启，会重新生成随机密码并打印到控制台。
+- **机器人不回应**：① 没填 `OwnerUin`（命令与私聊一律拒绝）；② OneBot 实现没在运行（看 WebUI 状态页与日志）；③ Agent 插件没配模型。
+- **官方通道"能收不能做"**：禁言 / 踢人 / 历史消息 / 合并转发等官方开放平台不提供，逐条对照见 [插件 API 参考](docs/plugin-api.md) 的能力表。
+- **群里有消息时电脑响提示音**：那是本机 QQ 客户端收到消息的通知音，与 FlexBot 无关（可在音量合成器里单独静音 `QQ.exe`）。
+- **AI 一轮回复有好几条消息**：模型在工具调用前输出的文本会先发出来（把该插件的「工具调用提示行」关掉即可只保留文本）。
+- **升级**：保留 `memory/` 与 `logs/` 目录，其余文件覆盖即可。
 
 ## 文档
 
-- [插件 API 参考](docs/plugin-api.md)：`IBotPlugin` / `IBotContext` / `IBotApi` 契约、消息模型、Hub、内置服务、设置项、两条通道的能力差异
+- [安装、构建与部署](docs/setup.md)：从源码构建、配置项说明、构建注意事项、发布打包（release.sh / GitHub Actions）
+- [插件开发指南](docs/plugin-dev.md)：脚本插件与编译型插件、NuGet 依赖、插件工厂与生成审计
+- [插件 API 参考](docs/plugin-api.md)：`IBotPlugin` / `IBotContext` / `IBotApi` 契约、消息模型、Hub、内置服务、两条通道能力差异
 - [宿主 HTTP API](docs/http-api.md)：认证方式、全部端点与请求响应、静态资源热更新语义
-- [文档目录](docs/README.md)：5 分钟写出第一个插件 + 目录/清单约定
+- [文档目录](docs/README.md)：5 分钟写出第一个插件 + 目录与清单约定
+
+## 从源码构建
+
+需要 .NET 10 SDK：
+
+```bash
+git clone <本仓库> && cd FlexBot
+dotnet run --project FlexBot
+```
+
+构建、配置项与打包发布的完整说明见 [安装、构建与部署](docs/setup.md)。
 
 ## 许可
 

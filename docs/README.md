@@ -2,6 +2,8 @@
 
 | 文档 | 内容 |
 |---|---|
+| [setup.md](setup.md) | 安装、构建与部署：从源码构建、配置项、构建注意事项、发布打包（release.sh / GitHub Actions） |
+| [plugin-dev.md](plugin-dev.md) | 插件开发指南：脚本插件与编译型插件、NuGet 依赖自动解析、插件工厂与生成审计 |
 | [plugin-api.md](plugin-api.md) | 插件开发参考：`IBotPlugin` / `IBotContext` / `IBotApi` 契约、消息模型、消息与事件 Hub、内置服务、设置项、两个通道的能力差异 |
 | [http-api.md](http-api.md) | 宿主 HTTP API：认证方式、全部端点、请求/响应示例、静态资源与热更新语义 |
 
