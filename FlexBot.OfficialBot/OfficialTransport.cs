@@ -50,7 +50,7 @@ public sealed class OfficialTransport : IBotTransport
         "SetGroupWholeBanAsync", "SetGroupKickAsync", "SetGroupCardAsync", "SetGroupSpecialTitleAsync",
         "SendGroupNoticeAsync", "SetGroupLeaveAsync", "GetGroupInfoAsync", "GetFriendListAsync",
         "UploadGroupFileAsync", "SetFriendAddRequestAsync", "SetGroupAddRequestAsync", "GetMsgAsync",
-        "GetGroupMsgHistoryAsync", "GetGroupMemberListAsync", "GroupPokeAsync", "GetLoginInfoAsync", "CallApiAsync"
+        "GetGroupMsgHistoryAsync", "GroupPokeAsync", "CallApiAsync"
     ];
 
     public OfficialTransport(OfficialTransportOptions opt)
@@ -235,9 +235,47 @@ public sealed class OfficialTransport : IBotTransport
     public Task<ApiResult> SetGroupAddRequestAsync(string flag, string subType, bool approve = true, string? reason = null) => Fail("加群请求");
     public Task<ApiResult<MsgInfo>> GetMsgAsync(long messageId) => Fail<MsgInfo>("取消息");
     public Task<ApiResult<List<MsgInfo>>> GetGroupMsgHistoryAsync(long groupId, long? messageId = null, int count = 20) => Fail<List<MsgInfo>>("历史消息");
-    public Task<ApiResult<List<GroupMemberInfo>>> GetGroupMemberListAsync(long groupId) => Fail<List<GroupMemberInfo>>("群成员列表");
+    public Task<ApiResult<List<GroupMemberInfo>>> GetGroupMemberListAsync(long groupId)
+    {
+        return Impl();
+        async Task<ApiResult<List<GroupMemberInfo>>> Impl()
+        {
+            try
+            {
+                if (!_channels.TryGetValue(groupId, out var ch) || ch is not SocketGroupChannel g)
+                    return ApiResult<List<GroupMemberInfo>>.Fail("官方通道：该群还没有入站消息，暂无法取成员列表");
+                var list = new List<GroupMemberInfo>();
+                await foreach (var page in g.GetMembersAsync(options: null))      // 官方接口分页返回，每页一个集合
+                    foreach (var m in page)
+                        list.Add(new GroupMemberInfo
+                        {
+                            GroupId = groupId,
+                            UserId = _ids.Resolve(_ids.ToLong("u:" + m.Id)),
+                            Nickname = m.Username ?? "",
+                            Role = m.Role.ToString().ToLowerInvariant(),
+                            JoinTime = m.JoinedAt.ToUnixTimeSeconds(),
+                            IsRobot = m.IsBot,
+                        });
+                Log($"取群成员列表 {groupId}: {list.Count} 人");
+                return ApiResult<List<GroupMemberInfo>>.Ok(list);
+            }
+            catch (Exception ex) { return ApiResult<List<GroupMemberInfo>>.Fail(ex); }
+        }
+    }
     public Task<ApiResult> GroupPokeAsync(long groupId, long userId) => Fail("戳一戳（官方 API 无此能力）");
-    public Task<ApiResult<AccountInfo>> GetLoginInfoAsync() => Fail<AccountInfo>("取登录信息");
+    public Task<ApiResult<AccountInfo>> GetLoginInfoAsync()
+    {
+        try
+        {
+            var u = _client?.Rest?.CurrentUser;
+            return Task.FromResult(ApiResult<AccountInfo>.Ok(new AccountInfo
+            {
+                UserId = SelfId,
+                Nickname = u?.Username ?? "官方机器人",
+            }));
+        }
+        catch (Exception ex) { return Task.FromResult(ApiResult<AccountInfo>.Fail(ex)); }
+    }
     public Task<ApiResult<JsonElement>> CallApiAsync(string action, Dictionary<string, object>? parameters = null) => Fail<JsonElement>("任意 API 透传");
 
     private Task<ApiResult<T>> Fail<T>(string what)
