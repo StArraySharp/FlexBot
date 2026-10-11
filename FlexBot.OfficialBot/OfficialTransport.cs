@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using FlexBot.PluginApi;
@@ -87,7 +88,13 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
         var c = new QQBotSocketClient(cfg);
         c.Log += OnLogAsync;
         c.MessageReceived += OnMessageReceivedAsync;
-        c.JoinedGroup += (g, _) => { Log($"已加入群：{g?.Id}"); return Task.CompletedTask; };
+        c.JoinedGroup += (g, _) =>
+        {
+            // 群通道的构造函数是 internal，只能从事件里拿到；这里缓存住，主动发消息才有通道可用
+            if (g is not null) _channels[_ids.ToLong("g:" + g.Id)] = g;
+            Log($"已加入群：{g?.Id}");
+            return Task.CompletedTask;
+        };
         c.LeftGroup += (g, _) => { Log($"已退出群：{g?.Id}"); return Task.CompletedTask; };
         c.MessageDeleted += (_, _, id) => { Log($"消息被撤回：{id}"); return Task.CompletedTask; };
         c.GroupActiveMessageRejected += (g, _) => { Log($"群 {g?.Id} 主动消息被拒（群管理关闭了通知）"); return Task.CompletedTask; };
@@ -227,8 +234,11 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
         try
         {
             if (_client is null) return ApiResult<long>.Fail("官方通道未连接");
-            if (!_channels.TryGetValue(targetId, out var ch))
-                return ApiResult<long>.Fail($"官方通道：{targetId} 还没有入站消息，暂不支持对该会话主动发送（一期限制）");
+            var ch = ResolveChannel(targetId, isGroup);
+            if (ch is null)
+                return ApiResult<long>.Fail(isGroup
+                    ? $"官方通道：群 {targetId} 尚无通道（官方没有「按 id 取群通道」的接口，需该群有过入站消息或机器人入群事件）"
+                    : $"官方通道：找不到会话 {targetId}（openid 无法解析成 Guid？）");
 
             var (content, dropped) = RenderMessage(message);
             if (string.IsNullOrWhiteSpace(content)) return ApiResult<long>.Fail("官方通道：消息内容为空");
@@ -347,6 +357,58 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
         _msgIdFwd[officialId] = id;
         _msgIdBack[id] = officialId;
         return id;
+    }
+
+    /// <summary>
+    /// 取会话通道：优先用缓存（入站消息/入群事件里缓存的）。
+    /// 官方 openid 就是 Guid，但库把通道构造函数设为 internal、且没有"按 id 取会话"的公开接口
+    /// （GetUserChannel 只认本地缓存），而主动发消息必须有通道对象 ⇒ 兜底用反射构造。
+    /// 反射失败不影响被动回复（那条路径本来就有真实通道对象）。
+    /// </summary>
+    private ISocketMessageChannel? ResolveChannel(long targetId, bool isGroup)
+    {
+        if (_channels.TryGetValue(targetId, out var cached)) return cached;
+        if (_client is null) return null;
+        if (!_ids.TryOpenId(targetId, out var key)) return null;
+
+        var hex = key.StartsWith("u:", StringComparison.Ordinal) || key.StartsWith("g:", StringComparison.Ordinal) ? key[2..] : key;
+        if (!Guid.TryParse(hex, out var guid)) return null;
+
+        // ① 公开路径：先把用户塞进库的缓存，再取私聊通道
+        if (!isGroup)
+        {
+            try { _client.GetUser(guid.ToString("N")); } catch { }
+            try
+            {
+                var viaApi = _client.GetUserChannel(guid);
+                if (viaApi is not null) { _channels[targetId] = viaApi; return viaApi; }
+            }
+            catch { }
+        }
+
+        // ② 兜底：反射构造 internal ctor（SocketGroupChannel(client, Guid) / SocketUserChannel(client, Guid, user)）
+        try
+        {
+            var type = isGroup ? typeof(SocketGroupChannel) : typeof(SocketUserChannel);
+            var ctor = type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                           .OrderBy(c => c.GetParameters().Length).FirstOrDefault();
+            if (ctor is null) return null;
+            var args = ctor.GetParameters().Select(p =>
+                p.ParameterType == typeof(QQBotSocketClient) ? (object)_client
+                : p.ParameterType == typeof(Guid) ? guid
+                : p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType)!
+                : null!).ToArray();
+            if (ctor.Invoke(args) is ISocketMessageChannel made)
+            {
+                _channels[targetId] = made;
+                Log($"按需构造{(isGroup ? "群" : "私聊")}通道成功：{type.Name} {guid:N}");
+                return made;
+            }
+        }
+        catch (Exception ex) { Log($"按需构造通道失败（{type0(isGroup)}）: {ex.Message}"); }
+        return null;
+
+        static string type0(bool g) => g ? "群" : "私聊";
     }
 
     /// <summary>OneBot 消息对象 → 官方纯文本。支持 string / MessageSegmentData / MessageSegment 及其列表</summary>
