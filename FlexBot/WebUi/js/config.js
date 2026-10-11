@@ -18,7 +18,6 @@ async function loadConfig() {
     $('cfgLogDir').value = c.logDir || '';
     $('cfgIsolateLogs').checked = c.isolateDependencyLogs !== false;
     $('cfgWebUiPort').value = c.webUiPort || '';
-    $('cfgBindAll').checked = !!c.webUiBindAll;
     $('cfgWebUiPwd').value = ''; // 密码不回显（服务端只存 SHA256）
     // 注意：不设 placeholder——浮动 label 会与 placeholder 文字重叠；说明在下方 desc 行
     $('cfgWebUiPwd').placeholder = ' ';
@@ -51,7 +50,6 @@ $('cfgSave').onclick = async () => {
       logDir: v('cfgLogDir'),
       isolateDependencyLogs: $('cfgIsolateLogs').checked,
       webUiPort: webUiPort,
-      webUiBindAll: $('cfgBindAll').checked,
       ...($('cfgWebUiPwd').value.length > 0 ? { webUiPassword: $('cfgWebUiPwd').value } : {}),
       pluginAutoload: d.pluginAutoload || {},
       reloadPlugins: $('cfgReload').checked

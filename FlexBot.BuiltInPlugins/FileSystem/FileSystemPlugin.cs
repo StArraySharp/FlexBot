@@ -7,7 +7,7 @@ namespace FileSystemPlugin;
 /// <summary>
 /// 沙箱文件操作插件：fs_read/fs_write/fs_append/fs_list/fs_delete/fs_mkdir/fs_info/fs_download
 /// 一切操作限制在沙箱根目录内（默认 memory/fs），路径越界一律拒绝。
-/// 命令仅管理员可触发（宿主分发保证 + 工具侧 IsOwner 双保险）。
+/// 命令仅管理员可触发（宿主分发保证 + 工具侧 IsAdmin 双保险）。
 /// </summary>
 public sealed class FileSystemPlugin : IBotPlugin
 {

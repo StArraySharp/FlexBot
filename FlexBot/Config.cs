@@ -12,7 +12,10 @@ static class BotConfig
     public const string ApiKey = "";
     public const string BaseUrl = "";
     public const string Model = "";
-    public const long OwnerUin = 3058465749;
+    // 主人 QQ 的**编译期默认值故意留空**：主人身份只应来自 config.json / WebUI，
+    // 不要把个人 QQ 写进源码（换人不必改代码，也不会随仓库泄露）。未配置时宿主按"无管理员"运行：
+    // 私聊与所有插件命令都会被拒绝（fail-closed），WebUI 也会要求先填 OwnerUin。
+    public const long OwnerUin = 0;
     // 记忆/日志/插件数据根目录：默认输出目录（exe 旁）下的 memory/
     public static readonly string MemoryDir = Path.Combine(AppContext.BaseDirectory, "memory");
 
@@ -45,8 +48,11 @@ class HostSettings
     /// <summary>备用模型列表（按顺序回落；主模型失败时依次尝试）。</summary>
     public List<FallbackModelSettings> FallbackModels { get; set; } = [];
     public long OwnerUin { get; set; } = BotConfig.OwnerUin;
-    /// <summary>额外管理员；OwnerUin 始终自动具有管理员权限。</summary>
-    public List<long> AdminUins { get; set; } = [];
+    /// <summary>额外管理员（**不含主人**）；OwnerUin 始终自动具有管理员权限。
+    /// 属性名刻意与 <c>HostConfig.AdminUins</c>（含主人的有效列表）区分，避免同名不同义。
+    /// JSON 键仍是 "AdminUins"，兼容既有 config.json。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("AdminUins")]
+    public List<long> ExtraAdminUins { get; set; } = [];
     /// <summary>可编辑人格；必须且只能有一个处于启用状态。</summary>
     public List<PersonaSettings> Personas { get; set; } = [];
     public string MemoryDir { get; set; } = BotConfig.MemoryDir;
@@ -89,12 +95,15 @@ class HostSettings
     /// <summary>日志目录；留空则使用 MemoryDir/logs</summary>
     public string LogDir { get; set; } = "";
 
+    // ---- 插件 NuGet 依赖解析 ----
+    /// <summary>插件的 NuGet 依赖源（flat-container 格式）；插件在 plugin.json 的 NuGet 字段声明包，
+    /// 加载时自动下载并铺入该插件的 libs/。可指向私有源/镜像。</summary>
+    public string NuGetFeed { get; set; } = "https://api.nuget.org/v3-flatcontainer";
+
     // ---- WebUI 端口配置 ----
     /// <summary>WebUI 监听端口（1024-65535；不允许常见端口如 80/443/3000 等）；0 表示自动分配</summary>
     public int WebUiPort { get; set; } = 0;
-    /// <summary>WebUI 绑定全部网卡（0.0.0.0，公网可达）；默认 false 仅 127.0.0.1。公网暴露必须同时设 WebUiPassword。</summary>
-    public bool WebUiBindAll { get; set; }
-    /// <summary>WebUI 登录密码；非空时启用登录页认证。公网暴露强烈建议设置。</summary>
+    /// <summary>WebUI 登录密码；非空时启用登录页认证（WebUI 默认绑定 0.0.0.0，对外暴露强烈建议设置）。</summary>
     public string WebUiPassword { get; set; } = "";
     /// <summary>WebUI 界面（卡片/导航）不透明度百分比 0-100，默认 100。</summary>
     public int WebUiUiOpacity { get; set; } = 100;
@@ -126,7 +135,7 @@ class HostSettings
     public bool IsVisionModel => BotConfig.IsVisionOf(Model);
 
     [System.Text.Json.Serialization.JsonIgnore]
-    public IReadOnlyCollection<long> AllAdminUins => [OwnerUin, .. AdminUins.Where(x => x > 0 && x != OwnerUin).Distinct()];
+    public IReadOnlyCollection<long> AllAdminUins => [OwnerUin, .. ExtraAdminUins.Where(x => x > 0 && x != OwnerUin).Distinct()];
 
     [System.Text.Json.Serialization.JsonIgnore]
     public PersonaSettings? ActivePersona => Personas.FirstOrDefault(x => x.Enabled);
@@ -154,7 +163,7 @@ class HostSettings
 
     public void NormalizeAccessSettings()
     {
-        AdminUins = AdminUins.Where(x => x > 0 && x != OwnerUin).Distinct().ToList();
+        ExtraAdminUins = ExtraAdminUins.Where(x => x > 0 && x != OwnerUin).Distinct().ToList();
     }
 
     public void Save()
@@ -190,6 +199,7 @@ class FallbackModelSettings
 class HostConfig(HostSettings s) : IBotConfig
 {
     public long OwnerUin => s.OwnerUin;
+    /// <summary>**有效管理员列表**：已含主人（= HostSettings.AllAdminUins）。插件与宿主门禁都用这个。</summary>
     public IReadOnlyCollection<long> AdminUins => s.AllAdminUins;
     public string MemoryDir => s.MemoryDir;
     /// <summary>全局命令前缀。</summary>

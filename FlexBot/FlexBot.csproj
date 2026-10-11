@@ -11,6 +11,8 @@
 
   <ItemGroup>
     <PackageReference Include="Photino.NET" Version="4.0.16" />
+    <!-- csx 插件：内存编译用户源码（只宿主需要，插件与脚本无需携带编译器） -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -18,7 +20,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 契约层已并入：PluginApi/ 源码随宿主编译（命名空间不变，插件按程序集名共享） -->
+    <!-- 契约层已剥离为独立程序集 FlexBot.Abstractions（命名空间 FlexBot.PluginApi 不变）：
+         宿主与插件都只共享这一份契约，插件不再引用宿主 exe -->
+    <ProjectReference Include="..\FlexBot.Abstractions\FlexBot.Abstractions.csproj" />
     <ProjectReference Include="..\FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" />
   </ItemGroup>
 

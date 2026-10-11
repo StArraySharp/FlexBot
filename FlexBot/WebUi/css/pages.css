@@ -45,6 +45,9 @@
 }
 .tag.off { background: var(--surface-c-highest); color: var(--on-surface-var); }
 .tag.noauto { background: var(--warn-container); color: var(--warn); }
+/* 来源徽标：区分 AI 生成 / pb_build 手工生成（无记录的不显示徽标） */
+.tag.ai { background: color-mix(in srgb, var(--primary) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-primary); }
+.tag.manual { background: var(--surface-c-highest); color: var(--on-surface-var); }
 
 /* ============ 配置页 ============ */
 .cfggrid { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; margin-bottom: 16px; }

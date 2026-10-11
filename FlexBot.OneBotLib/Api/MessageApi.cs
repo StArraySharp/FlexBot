@@ -114,7 +114,7 @@ namespace OneBotLib.Api
             var parameters = new Dictionary<string, object>
             {
                 { "user_id", userId },
-                { "messages", messages }
+                { "messages", WrapForwardNodes(messages) }
             };
             var result = await SendApiAsync("send_private_forward_msg", parameters);
             if (!result.Success)
@@ -130,7 +130,7 @@ namespace OneBotLib.Api
             var parameters = new Dictionary<string, object>
             {
                 { "group_id", groupId },
-                { "messages", messages }
+                { "messages", WrapForwardNodes(messages) }
             };
             var result = await SendApiAsync("send_group_forward_msg", parameters);
             if (!result.Success)
@@ -140,6 +140,20 @@ namespace OneBotLib.Api
             var msgId = result.Data.TryGetProperty("message_id", out var id) ? id.GetInt64() : 0;
             return ApiResult<long>.Ok(msgId);
         }
+
+        // 合并转发节点 → go-cqhttp 标准包装格式 {type:"node", data:{name,uin,content}}
+        // （NapCat/LLOneBot 均按此格式解析节点；平铺 user_id/nickname/content 会报 data undefined）
+        private static List<object> WrapForwardNodes(List<ForwardNode> messages) =>
+            messages.Select(n => (object)new Dictionary<string, object>
+            {
+                ["type"] = "node",
+                ["data"] = new Dictionary<string, object>
+                {
+                    ["name"] = n.Nickname,
+                    ["uin"] = n.UserId,
+                    ["content"] = n.Content
+                }
+            }).ToList();
 
         public async Task<ApiResult<List<ForwardMessageNode>>> GetForwardMsgNodesAsync(string id)
         {

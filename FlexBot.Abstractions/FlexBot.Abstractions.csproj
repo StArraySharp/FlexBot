@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- 契约层：命名空间保持 FlexBot.PluginApi 不变，源码零改动从宿主迁出 -->
+    <RootNamespace>FlexBot.PluginApi</RootNamespace>
+    <AssemblyName>FlexBot.Abstractions</AssemblyName>
+    <!-- 契约程序集必须与宿主/插件共享同一份，故不随任何消费者拷贝 -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 契约层唯一依赖：OneBot 协议库（事件参数与消息段类型出现在接口签名里） -->
+    <ProjectReference Include="..\FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

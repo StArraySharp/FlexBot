@@ -118,7 +118,7 @@ public sealed class ChatPlugin : IBotPlugin
         return Task.CompletedTask;
     }
 
-    // ---- 私聊（宿主已确保仅主人）；流式分段与群聊一致 ----
+    // ---- 私聊（宿主已确保仅管理员）；流式分段与群聊一致 ----
     private async Task<Handled> OnPrivateAsync(PrivateMessageEventArgs e)
     {
         var m = e.Message;

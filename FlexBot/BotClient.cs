@@ -25,13 +25,32 @@ class BotClient : OneBotClient, IBotApi
         return SendGroupMsgAsync(groupId, message);
     }
 
-    // 消息摘要（CQ 码压缩 + 截断；日志与回复共用）
+    // 消息摘要（日志与回复共用）：字符串原样；消息段序列渲染成 CQ 风格短码
+    // （text 段直出，其余 [type:关键值]，如 [at:123][reply:4]）
     internal static string MsgBrief(object message)
     {
-        var s = message?.ToString() ?? "";
-        // MessageSegment 列表的 ToString 未必可读——反射取常见形态前先简单处理
+        var s = message is IEnumerable<OneBotLib.MessageSegment.MessageSegment> segs
+            ? RenderSegments(segs)
+            : message?.ToString() ?? "";
         s = s.Replace("\n", " ⏎ ");
         return s.Length <= 200 ? s : s[..200] + "…";
+    }
+
+    private static string RenderSegments(IEnumerable<OneBotLib.MessageSegment.MessageSegment> segs)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var seg in segs)
+        {
+            if (seg.Type == "text")
+            {
+                if (seg.Data.TryGetValue("text", out var t)) sb.Append(t?.ToString());
+                continue;
+            }
+            // 非文本段：只有一个字段就带上值（[at:123]），多字段只留类型（[json]）
+            var one = seg.Data.Count == 1 ? seg.Data.Values.First()?.ToString() : null;
+            sb.Append(one is null ? $"[{seg.Type}]" : $"[{seg.Type}:{one}]");
+        }
+        return sb.ToString();
     }
 
     Task<ApiResult> IBotApi.DeleteMsgAsync(long messageId) => DeleteMsgAsync(messageId);

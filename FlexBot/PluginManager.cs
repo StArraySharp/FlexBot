@@ -1,7 +1,9 @@
+using System.IO.Compression;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
 using FlexBot.PluginApi;
+using FlexBot.Scripting;
 
 namespace FlexBot;
 
@@ -17,11 +19,14 @@ sealed class PluginLoadContext(
 {
     private static readonly HashSet<string> SharedAssemblies = new(StringComparer.OrdinalIgnoreCase)
     {
-        "FlexBot",  // 宿主程序集（含 PluginApi 契约层 + Routing 等共享类型）
-        "OneBotLib"
+        "FlexBot.Abstractions", // 契约层：宿主与全部插件共享同一份类型身份（热重载的地基）
+        "OneBotLib",            // OneBot 协议库
+        "FlexBot"               // 宿主程序集：兼容旧插件 DLL（其引用的是旧的整体宿主程序集）
     };
 
     private readonly AssemblyDependencyResolver _resolver = new(pluginPath);
+    // 插件自带第三方依赖目录（影子目录下的 libs/）：脚本插件与手放 DLL 统一从这里解析
+    private readonly string _libDir = Path.Combine(Path.GetDirectoryName(pluginPath) ?? ".", "libs");
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {
@@ -31,15 +36,53 @@ sealed class PluginLoadContext(
         if (assemblyName.Name is not null &&
             dependencyAssemblies.TryGetValue(assemblyName.Name, out var borrowed))
             return borrowed;
+        // ★ 插件自带 libs/：AssemblyDependencyResolver 只读 .deps.json 不扫目录，
+        //   故这里显式探测（脚本插件没有 .deps.json，第三方依赖全靠这一条）。
+        //   但先问默认上下文：框架/宿主已提供同名程序集时用它，避免 libs/ 里的旧副本遮蔽框架实现
+        //   （NuGet 包常带 System.* / netstandard 门面副本）。
+        if (assemblyName.Name is not null)
+        {
+            var libPath = Path.Combine(_libDir, assemblyName.Name + ".dll");
+            if (File.Exists(libPath))
+            {
+                try { return AssemblyLoadContext.Default.LoadFromAssemblyName(assemblyName); }
+                catch { /* 框架/宿主没有 → 用插件自带副本 */ }
+                return LoadFromAssemblyPath(libPath);
+            }
+        }
         var path = _resolver.ResolveAssemblyToPath(assemblyName);
         return path is null ? null : LoadFromAssemblyPath(path);
     }
 }
 
-// 插件清单（plugins/<名>/plugin.json）：声明依赖
+// 插件清单（plugins/<名>/plugin.json）：声明依赖、展示信息与设置项。
+// 编译型插件与脚本型插件共用这一份清单（脚本插件主要靠它提供设置项与展示信息）。
 class PluginManifest
 {
     public List<string> Depends { get; set; } = [];
+
+    /// <summary>展示用版本（已加载插件的实际版本以插件类为准；未加载时用此值展示）</summary>
+    public string? Version { get; set; }
+
+    /// <summary>展示用描述（同上）</summary>
+    public string? Description { get; set; }
+
+    /// <summary>设置项声明：插件类未声明 SettingDefs 时由此提供（脚本插件的主要配置入口）</summary>
+    public List<PluginSettingDef> Settings { get; set; } = [];
+
+    /// <summary>第三方 NuGet 依赖声明（保留字段：v1 未实现自动下载，手动放入 libs/ 即生效）</summary>
+    public List<string> NuGet { get; set; } = [];
+
+    /// <summary>来源标注（由 PluginBuilder 写入）：by = ai（AI 生成，带审计）| manual（pb_build 手工生成）。
+    /// 缺省表示没有生成记录（内置插件 / 手工放入 / zip 安装）。</summary>
+    public ProvenanceInfo? Provenance { get; set; }
+
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true
+    };
 
     public static PluginManifest LoadFrom(string pluginDir)
     {
@@ -47,7 +90,7 @@ class PluginManifest
         {
             var file = Path.Combine(pluginDir, "plugin.json");
             if (!File.Exists(file)) return new PluginManifest();
-            var m = JsonSerializer.Deserialize<PluginManifest>(File.ReadAllText(file));
+            var m = JsonSerializer.Deserialize<PluginManifest>(File.ReadAllText(file), JsonOpts);
             return m ?? new PluginManifest();
         }
         catch
@@ -55,6 +98,19 @@ class PluginManifest
             return new PluginManifest();
         }
     }
+}
+
+/// <summary>插件来源标注（plugin.json 的 Provenance）：区分 AI 生成与手工生成</summary>
+class ProvenanceInfo
+{
+    /// <summary>ai = AI 生成（有 generation.llm.jsonl 审计）；manual = pb_build 手工生成</summary>
+    public string? By { get; set; }
+    /// <summary>生成它的工具（如 pb_create / pb_update）</summary>
+    public string? Tool { get; set; }
+    /// <summary>生成时使用的模型</summary>
+    public string? Model { get; set; }
+    /// <summary>生成时间</summary>
+    public string? At { get; set; }
 }
 
 // IBotContext 实现：追踪该插件注册的全部订阅，Dispose 时统一退订（卸载兜底，防泄漏导致程序集无法回收）
@@ -77,6 +133,9 @@ sealed class BotContextImpl : IBotContext
     public IBotScheduler Scheduler { get; }
     public PluginKeyValueStore KV { get; }
     public SharedHttp Http { get; }
+    // 全进程共享一份编译服务（Roslyn 无状态；插件无需自带编译器）
+    private static readonly ICompilerService SharedCompiler = new HostCompilerService();
+    public ICompilerService Compiler => SharedCompiler;
 
     public BotContextImpl(string pluginName, IBotApi api, IBotConfig config, string pluginDir, string dataDir, MessageRouter messages, EventRouter events, Dictionary<string, JsonElement> pluginSettings, PluginManager manager)
     {
@@ -208,7 +267,8 @@ sealed class PluginManager
         public required BotContextImpl Context;
         public required PluginLoadContext Alc;
         public required WeakReference AlcRef;
-        public required PluginManifest Manifest; // 依赖声明
+        public required PluginManifest Manifest; // 依赖声明 + 展示信息 + 设置项声明
+        public bool IsScript;                    // 脚本型插件（*.cs 内存编译，无 <名>.dll）
         public readonly HashSet<string> Dependents = new(StringComparer.OrdinalIgnoreCase); // 依赖我的插件
     }
 
@@ -222,6 +282,28 @@ sealed class PluginManager
     private readonly object _cmdLock = new();
     private readonly object _lock = new();
     private readonly HostSettings _settings;
+
+    // 最近一次加载失败的原因（编译诊断/异常消息）：让 !plugin load 的回复能带回诊断，
+    // 插件工厂（pb_build）与 AI 才能直接看到 CS 错误而不是"详见控制台日志"
+    private readonly Dictionary<string, string> _lastLoadError = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>失败时记录原因并打印（同时供命令回复回喂）</summary>
+    private void NoteLoadFailure(string name, string reason)
+    {
+        lock (_lock) _lastLoadError[name] = reason;
+        Console.WriteLine($"[plugin] {name} 加载失败: {reason}");
+    }
+
+    private void ClearLoadFailure(string name)
+    {
+        lock (_lock) _lastLoadError.Remove(name);
+    }
+
+    /// <summary>最近一次加载失败原因（无则 null）；供 UI/命令展示</summary>
+    public string? LastLoadError(string name)
+    {
+        lock (_lock) return _lastLoadError.TryGetValue(name, out var v) ? v : null;
+    }
 
     public string PluginRoot { get; } = Path.Combine(AppContext.BaseDirectory, "plugins");
 
@@ -256,7 +338,7 @@ sealed class PluginManager
         {
             if (Path.GetFileName(dir).StartsWith('.')) continue;
             var n = Path.GetFileName(dir);
-            if (!File.Exists(Path.Combine(dir, n + ".dll"))) continue;
+            if (!IsPluginDir(dir, n)) continue;
             if (_settings.PluginAutoload.TryGetValue(n, out var enabled) && !enabled)
             {
                 Console.WriteLine($"[plugin] 跳过 {n}（启动自动加载已关闭，可用 !plugin load 手动加载）");
@@ -389,13 +471,63 @@ sealed class PluginManager
 
         var pluginSettings = LoadPluginSettings(name);
 
+        // NuGet 依赖：由 plugin.json 的 NuGet 字段声明，缺失的包自动下载铺进本插件 libs/
+        // （宿主持有解析器，插件作者无需任何外部工具/脚本；编译期与运行期都从 libs/ 取）
+        if (manifest.NuGet.Count > 0)
+        {
+            try
+            {
+                var nr = await NuGetResolver.EnsureLibsAsync(
+                    sourceDir, manifest.NuGet, _settings.NuGetFeed, SharedHttp.Client,
+                    m => Console.WriteLine($"[plugin] {name} {m}"));
+                if (nr.Added.Count > 0)
+                    Console.WriteLine($"[plugin] {name} NuGet 依赖已就位（{nr.Resolved} 个包）: {string.Join(", ", nr.Added)}");
+                foreach (var note in nr.Notes)
+                    Console.WriteLine($"[plugin] {name} NuGet: {note}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[plugin] {name} NuGet 依赖解析异常（继续尝试加载）: {ex.Message}");
+            }
+        }
+
         try
         {
-            // 影子拷贝：复制到 .shadow 下的唯一目录再加载，避免锁住源 DLL（构建/覆盖不受影响）；
-            // 目录带时间戳后缀：旧程序集可能尚未被 GC 回收（文件仍被锁），不能原地覆盖
+            // 影子目录：编译型插件复制源目录，脚本型插件把内存编译产物写进去 —— 之后共用同一套
+            // 加载/卸载机制。目录带时间戳后缀：旧程序集可能尚未被 GC 回收（文件仍被锁），不能原地覆盖
             var shadowRoot = Path.Combine(PluginRoot, ".shadow", $"{name}_{DateTime.Now.Ticks}");
-            CopyDirectory(sourceDir, shadowRoot);
             var shadowDll = Path.Combine(shadowRoot, name + ".dll");
+
+            // 类型判定：有 <名>.dll 是编译型；无 dll 且无 src/<名>.csproj 才走脚本型
+            // （编译型项目的源码在 src/ 下，若不排除会被误当脚本插件反复内存编译）
+            var hasDll = File.Exists(Path.Combine(sourceDir, name + ".dll"));
+            var hasCsproj = File.Exists(Path.Combine(sourceDir, "src", name + ".csproj"));
+            var isScript = !hasDll && !hasCsproj && ScriptCompiler.IsScriptPlugin(sourceDir);
+            if (!hasDll && !isScript)
+            {
+                NoteLoadFailure(name, $"存在源码项目但缺 {name}.dll（用 pb_build create/update 产出，或直接 dotnet build）");
+                return false;
+            }
+            if (isScript)
+            {
+                var build = await ScriptCompiler.CompileAsync(sourceDir, name);
+                if (!build.Ok)
+                {
+                    NoteLoadFailure(name, build.Diagnostics.Trim());
+                    return false;
+                }
+                Directory.CreateDirectory(shadowRoot);
+                await File.WriteAllBytesAsync(shadowDll, build.Pe!);
+                if (build.Pdb is not null)
+                    await File.WriteAllBytesAsync(Path.Combine(shadowRoot, name + ".pdb"), build.Pdb);
+                // libs/ 随影子目录，供 PluginLoadContext 解析第三方依赖
+                CopyDirectoryIfExists(Path.Combine(sourceDir, "libs"), Path.Combine(shadowRoot, "libs"));
+                Console.WriteLine($"[plugin] {name} csx 编译完成（{build.Pe!.Length} bytes{(build.FromCache ? "，命中缓存" : "")}）");
+            }
+            else
+            {
+                CopyDirectory(sourceDir, shadowRoot);
+            }
 
             var alc = new PluginLoadContext(shadowDll, dependencyAssemblies);
             var asm = alc.LoadFromAssemblyPath(shadowDll);
@@ -404,7 +536,7 @@ sealed class PluginManager
             if (pluginType is null)
             {
                 alc.Unload();
-                Console.WriteLine($"[plugin] {name}: 未找到 IBotPlugin 实现");
+                NoteLoadFailure(name, "程序集里没有 IBotPlugin 实现（需一个非抽象 public 类实现 FlexBot.PluginApi.IBotPlugin）");
                 return false;
             }
             var instance = Activator.CreateInstance(pluginType) as IBotPlugin
@@ -421,7 +553,8 @@ sealed class PluginManager
                 Context = ctx,
                 Alc = alc,
                 AlcRef = new WeakReference(alc),
-                Manifest = manifest
+                Manifest = manifest,
+                IsScript = isScript
             };
             lock (_lock)
             {
@@ -433,6 +566,7 @@ sealed class PluginManager
             }
 
             await instance.OnLoadAsync(ctx);
+            ClearLoadFailure(name);
             var depNote = dependencyRecords.Count > 0 ? $"（依赖: {string.Join(", ", dependencyRecords)}）" : "";
             Console.WriteLine($"[plugin] 已加载 {instance.Name} v{instance.Version} - {instance.Description}{depNote}");
 
@@ -442,7 +576,7 @@ sealed class PluginManager
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[plugin] 加载 {name} 失败: {ex}");
+            NoteLoadFailure(name, ex.Message);
             return false;
         }
     }
@@ -548,10 +682,13 @@ sealed class PluginManager
 
     // ===================== 插件设置 =====================
 
-    /// <summary>设置项定义（来自已加载实例；未加载返回空）</summary>
+    /// <summary>设置项定义：优先插件类声明的 SettingDefs，其次 plugin.json 的 Settings（脚本插件走后者）</summary>
     public IReadOnlyList<PluginSettingDef> GetSettingDefs(string name)
     {
-        lock (_lock) return _plugins.TryGetValue(name, out var p) ? p.Instance.SettingDefs : [];
+        lock (_lock)
+            if (_plugins.TryGetValue(name, out var p))
+                return p.Instance.SettingDefs.Count > 0 ? p.Instance.SettingDefs : p.Manifest.Settings;
+        return PluginManifest.LoadFrom(Path.Combine(PluginRoot, name)).Settings;
     }
 
     /// <summary>当前设置值（插件未加载也返回持久化值）</summary>
@@ -570,8 +707,12 @@ sealed class PluginManager
             var existing = LoadPluginSettings(name);
             LoadedPlugin? p = null;
             lock (_lock) _plugins.TryGetValue(name, out p);
-            var defs = p?.Instance.SettingDefs ?? [];
-            if (defs.Count == 0 && p is not null)
+            // 设置项来源：插件类声明优先，其次 plugin.json 的 Settings（脚本插件靠清单声明）
+            var defs = p is not null && p.Instance.SettingDefs.Count > 0
+                ? p.Instance.SettingDefs
+                : PluginManifest.LoadFrom(Path.Combine(PluginRoot, name)).Settings;
+            // 无任何声明就不接收写入：否则空集合会把已有 settings.json 覆盖掉
+            if (defs.Count == 0)
                 return (false, "该插件没有声明可配置项");
 
             var clean = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
@@ -807,7 +948,8 @@ sealed class PluginManager
         {
             foreach (var p in _plugins.Values)
             {
-                list.Add(new PluginInfo(p.Name, p.Instance.Version, p.Instance.Description, true, IsAutoload(p.Name)));
+                var (src, model) = ProvenanceOf(p.Manifest, p.SourceDir);
+                list.Add(new PluginInfo(p.Name, p.Instance.Version, p.Instance.Description, true, IsAutoload(p.Name), src, model));
                 loadedNames.Add(p.Name);
             }
         }
@@ -818,8 +960,11 @@ sealed class PluginManager
                 var n = Path.GetFileName(dir);
                 if (n.StartsWith('.')) continue;
                 if (loadedNames.Contains(n)) continue;
-                if (File.Exists(Path.Combine(dir, n + ".dll")))
-                    list.Add(new PluginInfo(n, "", "", false, IsAutoload(n)));
+                if (!IsPluginDir(dir, n)) continue;
+                // 未加载时用 plugin.json 的展示信息兜底（脚本插件的版本/描述主要来自清单）
+                var mf = PluginManifest.LoadFrom(dir);
+                var (src, model) = ProvenanceOf(mf, dir);
+                list.Add(new PluginInfo(n, mf.Version ?? "", mf.Description ?? "", false, IsAutoload(n), src, model));
             }
         }
         return list.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
@@ -829,7 +974,224 @@ sealed class PluginManager
     public bool IsAutoload(string name) =>
         !_settings.PluginAutoload.TryGetValue(name, out var enabled) || enabled;
 
-    public record PluginInfo(string Name, string Version, string Description, bool Loaded, bool AutoLoad);
+    /// <summary>来源判定：清单里的 Provenance 优先；缺失时看有没有生成日志（pb_build 生成过 → manual）；
+    /// 两者都没有 → handmade（内置 / 手工放入 / zip 安装）</summary>
+    private static (string Source, string? Model) ProvenanceOf(PluginManifest mf, string dir)
+    {
+        if (mf.Provenance?.By is { Length: > 0 } by)
+            return (by, mf.Provenance.Model);
+        return (File.Exists(Path.Combine(dir, "generation.log")) ? "manual" : "handmade", null);
+    }
+
+    public record PluginInfo(string Name, string Version, string Description, bool Loaded, bool AutoLoad,
+        string Source, string? Model);
+
+    // ===================== WebUI：重新搜索 / zip 安装 =====================
+
+    /// <summary>重新搜索插件目录（GetSnapshot 每次都是实时扫盘，这里额外给出统计与控制台记录）。</summary>
+    public (int Total, int Loaded) Rescan()
+    {
+        var snapshot = GetSnapshot();
+        var loaded = snapshot.Count(p => p.Loaded);
+        Console.WriteLine($"[plugin] 重新搜索插件目录：发现 {snapshot.Count} 个（已加载 {loaded}）");
+        return (snapshot.Count, loaded);
+    }
+
+    /// <summary>zip 安装结果。</summary>
+    public sealed record InstallResult(bool Ok, string Name, string Message, bool Loaded, int FileCount, List<string> Warnings);
+
+    // zip 内出现这些扩展名时给出提醒（插件本身已是完全信任的执行体，此处只做可见性提醒，不阻断）
+    private static readonly string[] RiskyExtensions =
+        [".exe", ".bat", ".cmd", ".ps1", ".sh", ".msi", ".scr", ".com", ".vbs", ".lnk"];
+
+    /// <summary>
+    /// 从 zip 安装插件到 plugins/&lt;名&gt;/：
+    /// 安全解压（防目录穿越 / 体积上限）→ 同名旧插件先卸载（保留 settings.json）→ 可选立即加载。
+    /// 支持两种打包形态：顶层目录含插件（常见），或文件直接位于压缩包根。
+    /// </summary>
+    public async Task<InstallResult> InstallFromZipAsync(
+        Stream zip, string? fallbackName, bool load, CancellationToken ct = default)
+    {
+        InstallResult Fail(string msg) => new(false, "", msg, false, 0, []);
+
+        const long MaxZipBytes = 64L * 1024 * 1024;
+        const long MaxUnpackedBytes = 128L * 1024 * 1024;
+
+        // ---- 1. 读入内存并打开 zip ----
+        using var buffer = new MemoryStream();
+        try { await zip.CopyToAsync(buffer, ct); }
+        catch (Exception ex) { return Fail($"读取上传内容失败: {ex.Message}"); }
+        if (buffer.Length == 0) return Fail("上传内容为空");
+        if (buffer.Length > MaxZipBytes) return Fail($"zip 超过 {MaxZipBytes / 1024 / 1024}MB 上限");
+        buffer.Position = 0;
+
+        ZipArchive archive;
+        try { archive = new ZipArchive(buffer, ZipArchiveMode.Read); }
+        catch (Exception ex) { return Fail($"不是有效的 zip 文件: {ex.Message}"); }
+
+        using (archive)
+        {
+            // ---- 2. 收集有效条目（跳过目录项与系统垃圾文件；剔除路径不安全条目）----
+            // 安全判定与目标目录无关，故可前置：含 .. 段 / 绝对路径 / 带冒号（盘符、ADS）一律拒绝，
+            // 这样既不污染后续的「顶层目录名」推断，也不会解压到插件目录之外（后面还有第二道校验）。
+            static bool IsUnsafeRelPath(string rel) =>
+                rel.Length == 0
+                || rel.StartsWith('/')
+                || rel.Contains(':')
+                || Path.IsPathRooted(rel)
+                || rel.Split('/').Any(seg => seg == "..");
+
+            var entries = new List<(string Rel, ZipArchiveEntry Entry)>();
+            var warnings = new List<string>();
+            foreach (var e in archive.Entries)
+            {
+                var rel = e.FullName.Replace('\\', '/').TrimStart('/');
+                if (rel.Length == 0 || rel.EndsWith('/')) continue;                       // 目录项
+                if (rel.StartsWith("__MACOSX/", StringComparison.OrdinalIgnoreCase)) continue;
+                var leaf = rel.Split('/')[^1];
+                if (leaf is ".DS_Store" or "Thumbs.db") continue;
+                if (IsUnsafeRelPath(rel)) { warnings.Add($"已跳过不安全条目: {e.FullName}"); continue; }
+                entries.Add((rel, e));
+            }
+            if (entries.Count == 0)
+                return Fail(warnings.Count > 0
+                    ? $"zip 内没有可解压的安全文件（已跳过 {warnings.Count} 个越界条目）"
+                    : "zip 内没有文件");
+
+            // ---- 3. 判定插件名与需要剥离的顶层前缀 ----
+            static bool LooksLikePlugin(List<(string Rel, ZipArchiveEntry Entry)> list, string prefix) =>
+                list.Any(x => x.Rel.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    && (x.Rel.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+                     || x.Rel.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
+                     || x.Rel.EndsWith("plugin.json", StringComparison.OrdinalIgnoreCase)));
+
+            var topDirs = entries.Where(x => x.Rel.Contains('/'))
+                .Select(x => x.Rel.Split('/')[0]).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var rootFiles = entries.Where(x => !x.Rel.Contains('/')).ToList();
+
+            var name = "";
+            var prefix = "";
+            if (topDirs.Count == 1 && rootFiles.Count == 0 && LooksLikePlugin(entries, topDirs[0] + "/"))
+            {
+                name = topDirs[0];
+                prefix = topDirs[0] + "/";
+            }
+            else
+            {
+                var rootDll = rootFiles.Select(x => x.Rel)
+                    .FirstOrDefault(r => r.EndsWith(".dll", StringComparison.OrdinalIgnoreCase));
+                if (rootDll is not null) name = Path.GetFileNameWithoutExtension(rootDll);
+                else if (LooksLikePlugin(entries, "")) name = (fallbackName ?? "").Trim();
+            }
+            if (string.IsNullOrWhiteSpace(name))
+                return Fail("无法确定插件名：请把插件放进以插件名命名的顶层目录（内含 <名>.dll 或 *.cs），或用 <插件名>.zip 命名压缩包");
+
+            if (name.Length > 64 || name[0] == '.' || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                || name.Contains('/') || name.Contains('\\') || name is "." or "..")
+                return Fail($"插件名非法: {name}（不能含路径分隔符/非法字符，也不能以点开头）");
+
+            // ---- 4. 目标目录与同名旧插件处理 ----
+            var rootFull = Path.GetFullPath(PluginRoot);
+            var targetDir = Path.GetFullPath(Path.Combine(rootFull, name));
+            if (!targetDir.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                return Fail("目标路径越界");
+
+            var existed = Directory.Exists(targetDir);
+            var settingsPath = Path.Combine(targetDir, "settings.json");
+            string? keepSettings = null;
+            if (existed && File.Exists(settingsPath))
+            {
+                try { keepSettings = await File.ReadAllTextAsync(settingsPath, ct); } catch { }
+            }
+
+            if (existed)
+            {
+                if (IsLoaded(name))
+                {
+                    Console.WriteLine($"[plugin] 安装 {name}：同名插件已加载，先卸载");
+                    await UnloadAsync(name);
+                    await Task.Delay(300); // 给 ALC 一点释放时间
+                }
+                try { Directory.Delete(targetDir, true); }
+                catch (Exception ex) { return Fail($"旧插件目录无法删除（可能仍被占用，请先卸载/重启宿主）: {ex.Message}"); }
+                // 清掉旧设置缓存，避免下次加载读到上一版本的值
+                lock (_lock) _pluginSettings.Remove(name);
+            }
+
+            // ---- 5. 解压（体积上限；路径安全已在收集阶段过滤，这里再校验一次目标落点）----
+            Directory.CreateDirectory(targetDir);
+            var written = 0;
+            long total = 0;
+            foreach (var (rel0, entry) in entries)
+            {
+                var rel = prefix.Length > 0 && rel0.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    ? rel0[prefix.Length..] : rel0;
+                if (rel.Length == 0) continue;
+
+                var dest = Path.GetFullPath(Path.Combine(targetDir, rel.Replace('/', Path.DirectorySeparatorChar)));
+                if (!dest.StartsWith(targetDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                {
+                    warnings.Add($"已跳过越界条目: {rel0}");
+                    continue;
+                }
+
+                total += entry.Length;
+                if (total > MaxUnpackedBytes)
+                {
+                    warnings.Add($"解压总量超过 {MaxUnpackedBytes / 1024 / 1024}MB，已停止后续条目");
+                    break;
+                }
+
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    await using var src = entry.Open();
+                    await using var dst = File.Create(dest);
+                    await src.CopyToAsync(dst, ct);
+                    written++;
+                }
+                catch (Exception ex)
+                {
+                    warnings.Add($"解压失败 {rel}: {ex.Message}");
+                    continue;
+                }
+
+                if (RiskyExtensions.Any(x => dest.EndsWith(x, StringComparison.OrdinalIgnoreCase)))
+                    warnings.Add($"含可执行/脚本文件: {rel}");
+            }
+
+            if (written == 0)
+            {
+                try { Directory.Delete(targetDir, true); } catch { }
+                return Fail("zip 内没有成功解压的文件");
+            }
+
+            // 保留用户设置（zip 未自带 settings.json 时回填）
+            if (keepSettings is not null && !File.Exists(settingsPath))
+            {
+                try { await File.WriteAllTextAsync(settingsPath, keepSettings, ct); } catch { }
+            }
+
+            // ---- 6. 可选立即加载 ----
+            var loaded = false;
+            var note = "";
+            if (load)
+            {
+                if (!BotState.Connected)
+                {
+                    note = "（WS 未连接，仅解压未加载；连上后点「加载」或 !plugin load）";
+                }
+                else
+                {
+                    loaded = await LoadAsync(name);
+                    note = loaded ? "，已自动加载" : "，但加载失败（详见控制台日志）";
+                }
+            }
+
+            Console.WriteLine($"[plugin] 已从 zip 安装 {name}：{written} 个文件{(existed ? "（覆盖旧版本）" : "")}{note}");
+            return new InstallResult(true, name, $"已安装 {name}：{written} 个文件{note}", loaded, written, warnings);
+        }
+    }
 
     // ===================== 命令注册表 =====================
 
@@ -922,7 +1284,8 @@ sealed class PluginManager
             {
                 var deps = p.Manifest.Depends.Count > 0 ? $"（依赖: {string.Join(",", p.Manifest.Depends)}）" : "";
                 var depsOn = p.Dependents.Count > 0 ? $"（被依赖: {string.Join(",", p.Dependents)}）" : "";
-                sb.AppendLine($"  [已加载] {p.Name} v{p.Instance.Version} - {p.Instance.Description}{deps}{depsOn}");
+                var kind = p.IsScript ? "（csx 脚本）" : "";
+                sb.AppendLine($"  [已加载] {p.Name}{kind} v{p.Instance.Version} - {p.Instance.Description}{deps}{depsOn}");
             }
         }
         var loadedNames = new HashSet<string>(_plugins.Keys, StringComparer.OrdinalIgnoreCase);
@@ -933,7 +1296,7 @@ sealed class PluginManager
                 var n = Path.GetFileName(dir);
                 if (n.StartsWith('.')) continue;
                 if (loadedNames.Contains(n)) continue;
-                if (File.Exists(Path.Combine(dir, n + ".dll")))
+                if (IsPluginDir(dir, n))
                     sb.AppendLine($"  [未加载] {n}");
             }
         }
@@ -941,7 +1304,7 @@ sealed class PluginManager
         return sb.ToString().TrimEnd();
     }
 
-    // !plugin 命令入口（宿主级，仅主人私聊可用）
+    // !plugin 命令入口（宿主级，仅管理员私聊可用）
     public async Task<string> HandleCommandAsync(string text)
     {
         var parts = text.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
@@ -952,17 +1315,51 @@ sealed class PluginManager
             case "list":
                 return BuildList();
             case "load":
-                return arg.Length == 0 ? "用法: !plugin load <名称>"
-                    : await LoadAsync(arg) ? $"已加载插件 {arg}" : $"加载 {arg} 失败（详见控制台日志）";
+                if (arg.Length == 0) return "用法: !plugin load <名称>";
+                if (await LoadAsync(arg)) return $"已加载插件 {arg}";
+                // 把失败原因（编译诊断/异常）直接带出来，插件工厂与 AI 才能看到 CS 错误
+                var why = LastLoadError(arg);
+                if (string.IsNullOrEmpty(why)) return $"加载 {arg} 失败（详见控制台日志）";
+                return $"加载 {arg} 失败:\n{(why.Length > 900 ? why[..900] + "…" : why)}";
             case "unload":
                 return arg.Length == 0 ? "用法: !plugin unload <名称>"
                     : await UnloadAsync(arg) ? $"已卸载插件 {arg}" : $"卸载 {arg} 失败";
             case "reload":
                 return arg.Length == 0 ? "用法: !plugin reload <名称>"
                     : await ReloadAsync(arg) ? $"已重载插件 {arg}" : $"重载 {arg} 失败（详见控制台日志）";
+            case "nuget":
+                return arg.Length == 0 ? "用法: !plugin nuget <名称>" : await ResolveDepsAsync(arg);
             default:
-                return "用法: !plugin [list|load|unload|reload] [名称]";
+                return "用法: !plugin [list|load|unload|reload|nuget] [名称]";
         }
+    }
+
+    /// <summary>按 plugin.json 的 NuGet 字段把依赖铺进 libs/（插件加载时会自动做，这里可手动/被插件工厂预调）。
+    /// 注意与 PluginBuilder 的 `pb_build deps`（设置插件间 Depends）不是一回事，故不叫 deps。</summary>
+    public async Task<string> ResolveDepsAsync(string name)
+    {
+        var dir = Path.Combine(PluginRoot, name);
+        if (!Directory.Exists(dir)) return $"插件 {name} 不存在";
+        var manifest = PluginManifest.LoadFrom(dir);
+        if (manifest.NuGet.Count == 0)
+            return $"{name} 未声明 NuGet 依赖（在 plugin.json 里写 \"NuGet\": [\"包名@版本\"]）";
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"{name} 声明依赖: {string.Join(", ", manifest.NuGet)}");
+        try
+        {
+            var r = await NuGetResolver.EnsureLibsAsync(dir, manifest.NuGet, _settings.NuGetFeed,
+                SharedHttp.Client, m => Console.WriteLine($"[plugin] {name} {m}"));
+            sb.AppendLine(r.Added.Count > 0
+                ? $"已铺入 libs/（{r.Resolved} 个包）: {string.Join(", ", r.Added)}"
+                : "libs/ 已是最新，或包内没有可用的 lib/ 资产");
+            foreach (var note in r.Notes) sb.AppendLine($"· {note}");
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"解析失败: {ex.Message}");
+        }
+        return sb.ToString().TrimEnd();
     }
 
     // ===================== 内部工具 =====================
@@ -975,10 +1372,14 @@ sealed class PluginManager
             var path = Path.GetFullPath(dllOrName);
             return File.Exists(path) ? Path.GetDirectoryName(path) : null;
         }
-        // 形态 2：插件名 → plugins/<名>/<名>.dll
+        // 形态 2：插件名 → plugins/<名>/（编译型 <名>.dll 或 脚本型 *.cs 源码）
         var dir = Path.Combine(PluginRoot, dllOrName);
-        return File.Exists(Path.Combine(dir, dllOrName + ".dll")) ? dir : null;
+        return IsPluginDir(dir, dllOrName) ? dir : null;
     }
+
+    /// <summary>插件目录判定：编译型（<名>.dll 存在）或脚本型（目录内有 *.cs 源码）</summary>
+    private static bool IsPluginDir(string dir, string name) =>
+        File.Exists(Path.Combine(dir, name + ".dll")) || ScriptCompiler.IsScriptPlugin(dir);
 
     private static void CopyDirectory(string src, string dest)
     {
@@ -990,6 +1391,12 @@ sealed class PluginManager
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(file, target, true);
         }
+    }
+
+    // 源目录存在才复制（libs/ 这类可选目录）
+    private static void CopyDirectoryIfExists(string src, string dest)
+    {
+        if (Directory.Exists(src)) CopyDirectory(src, dest);
     }
 
     // 删除插件 name 的全部影子目录（保留 keep；失败静默，旧锁未释放时下次再清）

@@ -15,18 +15,51 @@ class BotTools(IBotContext ctx)
     private readonly IBotConfig _cfg = ctx.Config;
     private readonly string _memoryDir = ctx.Config.MemoryDir;
 
-    // 当前对话环境（由外部在每次调用前设置）
-    public long CurrentCallerUin;
-    public string CurrentCallerName = "";
-    public long CurrentGroupId;
+    // 当前对话环境：读写都落到本轮 TurnContext（AsyncLocal），
+    // 不再用共享字段 —— 多人并发时各轮互不干扰
+    public long CurrentCallerUin
+    {
+        get => CurrentTurn.Value?.CallerUin ?? 0;
+        set => CurrentTurn.Ensure().CallerUin = value;
+    }
+
+    public string CurrentCallerName
+    {
+        get => CurrentTurn.Value?.CallerName ?? "";
+        set => CurrentTurn.Ensure().CallerName = value;
+    }
+
+    public long CurrentGroupId
+    {
+        get => CurrentTurn.Value?.GroupId ?? 0;
+        set => CurrentTurn.Ensure().GroupId = value;
+    }
 
     // 最近一次截图保存的路径（AI 调 computer_take_screenshot 时由 LoggingFunction 更新）
-    public string? LastScreenshotPath;
+    public string? LastScreenshotPath
+    {
+        get => CurrentTurn.Value?.LastScreenshotPath;
+        set => CurrentTurn.Ensure().LastScreenshotPath = value;
+    }
 
     // 本轮对话内 search_web 调用次数（AskAgentAsync 每轮开始重置为 0，上限 3 次防傻搜）
-    public int SearchCount;
+    public int SearchCount
+    {
+        get => CurrentTurn.Value?.SearchCount ?? 0;
+        set => CurrentTurn.Ensure().SearchCount = value;
+    }
 
-    private bool IsOwner => _cfg.AdminUins.Contains(CurrentCallerUin);
+    // 最近一次工具调用**之前**的助手文本快照（由 AgentService 在流式工具事件时写入），
+    // 供插件工厂把"完整 LLM 输出 + 工具调用"落成审计
+    public string LastToolRoundText
+    {
+        get => CurrentTurn.Value?.AssistantText ?? "";
+        set => CurrentTurn.Ensure().AssistantText = value;
+    }
+
+    // 身份必须实时读取（见 TurnContext）：AdminUins 是"主人 ∪ 追加管理员"的有效列表，
+    // 所以这里判的是管理员级权限 —— 命名与描述都不要再写成 owner
+    private bool IsAdmin => _cfg.AdminUins.Contains(CurrentCallerUin);
 
     public List<AITool> CreateAll()
     {
@@ -43,14 +76,14 @@ class BotTools(IBotContext ctx)
             AIFunctionFactory.Create(ReadMemory, name: "read_memory", description: "读取已保存的记忆"),
             AIFunctionFactory.Create(ListMemories, name: "list_memories", description: "列出所有记忆主题名"),
             AIFunctionFactory.Create(DeleteMemory, name: "delete_memory", description: "删除一条记忆"),
-            AIFunctionFactory.Create(SendGroupMsg, name: "send_group_msg", description: "在指定QQ群发送消息，可@某人（仅主人可用，群号可省略默认当前群）"),
-            AIFunctionFactory.Create(SendPrivateMsg, name: "send_private_msg", description: "给指定QQ发私聊消息（仅主人可用）"),
-            AIFunctionFactory.Create(SendImage, name: "send_image", description: "把本地图片文件发送给指定QQ（私聊）或QQ群（仅主人可用）"),
+            AIFunctionFactory.Create(SendGroupMsg, name: "send_group_msg", description: "在指定QQ群发送消息，可@某人（仅管理员可用，群号可省略默认当前群）"),
+            AIFunctionFactory.Create(SendPrivateMsg, name: "send_private_msg", description: "给指定QQ发私聊消息（仅管理员可用）"),
+            AIFunctionFactory.Create(SendImage, name: "send_image", description: "把本地图片文件发送给指定QQ（私聊）或QQ群（仅管理员可用）"),
             AIFunctionFactory.Create(SendGroupPoke, name: "send_poke", description: "在QQ群戳指定用户，可指定次数并发执行（任何人可用，群号可省略默认当前群）"),
-            AIFunctionFactory.Create(DownloadAndSendFile, name: "download_and_send_file", description: "从 URL 下载文件并发送到群（仅主人可用，群号可省略默认当前群）"),
-            AIFunctionFactory.Create(AddWatchedGroup, name: "add_watched_group", description: "把QQ群加入关注列表（仅主人可用）"),
-            AIFunctionFactory.Create(RemoveWatchedGroup, name: "remove_watched_group", description: "把QQ群移出关注列表（仅主人可用）"),
-            AIFunctionFactory.Create(ListWatchedGroups, name: "list_watched_groups", description: "列出已关注的QQ群（仅主人可用）"),
+            AIFunctionFactory.Create(DownloadAndSendFile, name: "download_and_send_file", description: "从 URL 下载文件并发送到群（仅管理员可用，群号可省略默认当前群）"),
+            AIFunctionFactory.Create(AddWatchedGroup, name: "add_watched_group", description: "把QQ群加入关注列表（仅管理员可用）"),
+            AIFunctionFactory.Create(RemoveWatchedGroup, name: "remove_watched_group", description: "把QQ群移出关注列表（仅管理员可用）"),
+            AIFunctionFactory.Create(ListWatchedGroups, name: "list_watched_groups", description: "列出已关注的QQ群（仅管理员可用）"),
             AIFunctionFactory.Create(RunCommand, name: "run_command", description: "执行宿主或插件注册的命令并返回结果（仅管理员可用，如 run_command(command=\"timer\", args=\"60 123456 你好\")）"),
             AIFunctionFactory.Create(ListCommands, name: "list_commands", description: "列出全部可执行命令（名称+说明+来源插件），配合 run_command 使用"),
             AIFunctionFactory.Create(FsRead, name: "fs_read", description: "读自己文件工作区的文本文件（分页返回，约 3000 字符/页）"),
@@ -64,8 +97,10 @@ class BotTools(IBotContext ctx)
             AIFunctionFactory.Create(FsReplace, name: "fs_replace", description: "用正则替换自己文件工作区中单文件的文本（支持 $1 分组引用；改代码局部用，避免重写全文）"),
         ];
         var all = tools.Select(t => t is AIFunction f ? new LoggingFunction(f, _memoryDir, p => LastScreenshotPath = p) : t).ToList();
-        // PluginBuilder 工具（独立桥接类，命令通道跨 ALC 调用）
-        var pbBridge = new PluginBuilderTools(ctx) { CurrentCallerUin = CurrentCallerUin };
+        // PluginBuilder 工具（独立桥接类，命令通道跨 ALC 调用）；
+        // 传 Func 而不是值快照：调用发生时再读，避免工具在本次运行中被重建后拿到过期的身份/文本
+        var pbBridge = new PluginBuilderTools(ctx,
+            () => CurrentCallerUin, () => LastToolRoundText, () => CurrentGroupId);
         foreach (var extra in pbBridge.Create())
             all.Add(new LoggingFunction(extra, _memoryDir, _ => { }));
         return all;
@@ -75,7 +110,7 @@ class BotTools(IBotContext ctx)
     [Description("执行宿主或插件注册的命令并返回结果文本。command 是命令名（不含前缀），args 是参数串。仅管理员对话可用。")]
     async Task<string> RunCommand([Description("命令名，如 timer / watchs / plugin")] string command, [Description("参数串，可空")] string? args = null)
     {
-        if (!IsOwner) return "无权限：只有机器人管理员可以通过我执行命令。";
+        if (!IsAdmin) return "无权限：只有机器人管理员可以通过我执行命令。";
         var result = await ctx.TryInvokeCommandAsync(command, args ?? "");
         return result ?? $"未找到命令「{command}」。可先调用 list_commands 查看全部可用命令。";
     }
@@ -470,7 +505,7 @@ class BotTools(IBotContext ctx)
     [Description("在指定 QQ 群发送一条消息，可 @ 某人。group_id 可省略，默认发送到当前所在群。")]
     async Task<string> SendGroupMsg([Description("目标群号，可省略，默认当前群")] long? groupId, [Description("消息内容")] string message, [Description("要 @ 的用户QQ号，可省略")] long? atUserId = null)
     {
-        if (!IsOwner) return "无权限：只有机器人管理员可以让我发群消息。";
+        if (!IsAdmin) return "无权限：只有机器人管理员可以让我发群消息。";
         var gid = groupId ?? CurrentGroupId;
         if (gid <= 0) return "不知道目标群号，请明确告诉我群号。";
         object content = message;
@@ -489,7 +524,7 @@ class BotTools(IBotContext ctx)
     [Description("给指定 QQ 发送私聊消息。")]
     async Task<string> SendPrivateMsg([Description("目标 QQ 号")] long userId, [Description("消息内容")] string message)
     {
-        if (!IsOwner) return "无权限：只有机器人管理员可以让我发私聊消息。";
+        if (!IsAdmin) return "无权限：只有机器人管理员可以让我发私聊消息。";
         var r = await _api.SendPrivateMsgAsync(userId, message);
         return r.Success ? $"已发送私聊消息，message_id={r.Data}" : $"发送失败: {r.ErrorMessage}";
     }
@@ -497,7 +532,7 @@ class BotTools(IBotContext ctx)
     [Description("把本地图片文件发送给指定 QQ（私聊）或 QQ 群。图片路径是绝对路径，例如 D:\\xx\\screenshot.png。")]
     async Task<string> SendImage([Description("本地图片文件绝对路径")] string path, [Description("目标 QQ 号（私聊）或群号（群聊）")] long targetId, [Description("true=发送到群，false=发送私聊，可省略默认私聊")] bool toGroup = false)
     {
-        if (!IsOwner) return "无权限：只有机器人管理员可以让我发图片。";
+        if (!IsAdmin) return "无权限：只有机器人管理员可以让我发图片。";
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return $"图片不存在: {path}";
         try
         {
@@ -530,7 +565,7 @@ class BotTools(IBotContext ctx)
     [Description("从 URL 下载一个文件并发送到群（大小限制 100MB）。")]
     async Task<string> DownloadAndSendFile([Description("文件下载链接，需带 http(s)://")] string url, [Description("发送到的群号，可省略默认当前群")] long? groupId = null, [Description("文件名，可省略")] string? filename = null)
     {
-        if (!IsOwner) return "无权限：只有机器人管理员可以让我下载并发送文件。";
+        if (!IsAdmin) return "无权限：只有机器人管理员可以让我下载并发送文件。";
         var gid = groupId ?? CurrentGroupId;
         if (gid <= 0) return "不知道目标群号，请明确告诉我群号。";
 
@@ -595,10 +630,10 @@ class BotTools(IBotContext ctx)
         Regex.Replace(name.Trim(), @"[^a-zA-Z0-9_-]", "_");
 
     // ---- 关注群管理（主人专属，与 Admin 插件共享 watched_groups.txt） ----
-    [Description("把指定 QQ 群加入关注列表，之后机器人会收集并选择性回复该群消息（仅主人可用）。")]
+    [Description("把指定 QQ 群加入关注列表，之后机器人会收集并选择性回复该群消息（仅管理员可用）。")]
     public string AddWatchedGroup([Description("群号")] long groupId)
     {
-        if (!IsOwner) return "无权限：只有机器人管理员可以添加关注群。";
+        if (!IsAdmin) return "无权限：只有机器人管理员可以添加关注群。";
         if (groupId <= 0) return "群号无效。";
         var list = LoadWatched().ToHashSet();
         if (list.Add(groupId))
@@ -609,10 +644,10 @@ class BotTools(IBotContext ctx)
         return $"群 {groupId} 已在关注列表中。";
     }
 
-    [Description("把指定 QQ 群移出关注列表（仅主人可用）。")]
+    [Description("把指定 QQ 群移出关注列表（仅管理员可用）。")]
     public string RemoveWatchedGroup([Description("群号")] long groupId)
     {
-        if (!IsOwner) return "无权限：只有机器人管理员可以移除关注群。";
+        if (!IsAdmin) return "无权限：只有机器人管理员可以移除关注群。";
         var list = LoadWatched().ToHashSet();
         if (list.Remove(groupId))
         {
@@ -622,10 +657,10 @@ class BotTools(IBotContext ctx)
         return $"群 {groupId} 不在关注列表中。";
     }
 
-    [Description("列出当前关注的 QQ 群列表（仅主人可用）。")]
+    [Description("列出当前关注的 QQ 群列表（仅管理员可用）。")]
     public string ListWatchedGroups()
     {
-        if (!IsOwner) return "无权限：只有机器人管理员可以查看关注列表。";
+        if (!IsAdmin) return "无权限：只有机器人管理员可以查看关注列表。";
         var list = LoadWatched();
         return list.Count == 0 ? "尚未关注任何群。" : "关注群: " + string.Join(", ", list);
     }

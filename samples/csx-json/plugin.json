@@ -1,0 +1,15 @@
+{
+  "Version": "1.0.0",
+  "Description": "Newtonsoft.Json JSON 工具（第三方依赖由宿主自动解析，无需脚本/工具）",
+  "Depends": [],
+  "NuGet": ["Newtonsoft.Json@13.0.4"],
+  "Settings": [
+    {
+      "Key": "MaxChars",
+      "Label": "回复最大字符数",
+      "Type": "number",
+      "Default": "1500",
+      "Description": "美化后的 JSON 超过该长度会截断（最小 200）"
+    }
+  ]
+}

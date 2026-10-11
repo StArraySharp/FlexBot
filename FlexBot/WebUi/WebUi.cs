@@ -32,6 +32,8 @@ static class WebUi
         22, 23, 25, 53, 110, 143, 465, 587, 993, 995, 3306, 5432, 6379
     ];
 
+    // 登录失败退避表：来源 IP → (连续失败次数, 解禁时刻)。内存态，重启清零。
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (int Count, DateTime Until)> LoginFails = new();
     // 登录会话 token（重启轮换；认证开启时所有 /api/* 与页面均需携带）
     private static readonly string SessionToken = Convert.ToHexString(Guid.NewGuid().ToByteArray())
         .ToLowerInvariant();
@@ -39,8 +41,8 @@ static class WebUi
     public static string Start(PluginManager plugins, HostSettings settings, BotClient client, ProcessManager procs)
     {
         var port = GetPort(settings.WebUiPort);
-        // 绑定地址：BindAll=true → 0.0.0.0（公网可达）；默认 127.0.0.1 仅本机
-        var bindAddr = settings.WebUiBindAll ? "0.0.0.0" : "127.0.0.1";
+        // WebUI 固定绑定全部网卡（0.0.0.0，公网可达），对外暴露请设置 WebUiPassword
+        const string bindAddr = "0.0.0.0";
         var authOn = !string.IsNullOrWhiteSpace(settings.WebUiPassword);
         // 兼容手写明文：非 64 位十六进制一律视为明文，启动时自动转 SHA256 存储（磁盘不落明文）
         if (authOn && !IsSha256Hex(settings.WebUiPassword))
@@ -49,7 +51,8 @@ static class WebUi
             settings.Save();
             Console.WriteLine("[webui] WebUiPassword 已由明文自动转换为 SHA256 存储");
         }
-        Console.WriteLine($"[webui] 启动 WebUI 在 http://{bindAddr}:{port}{(bindAddr == "0.0.0.0" ? "（全网卡，公网可达）" : "")}{(authOn ? "，已开启登录认证" : "，无密码（仅限本机安全）")}");
+        // 日志里给人看的地址用本机回环（0.0.0.0 不是能直接打开的地址）；实际监听仍是全网卡
+    Console.WriteLine($"[webui] 启动 WebUI 在 http://127.0.0.1:{port}（本机；实际监听 0.0.0.0，局域网可访问）{(authOn ? "，已开启登录认证" : "，无密码（建议设置 WebUiPassword）")}");
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddSingleton(plugins);
         builder.Logging.ClearProviders(); // 不让 ASP.NET 日志污染控制台
@@ -100,17 +103,29 @@ static class WebUi
 
         // ---- 登录页与认证接口 ----
         app.MapGet("/login", () => Results.Text(LoadResource("login.html"), "text/html; charset=utf-8"));
-        app.MapPost("/api/auth/login", (LoginPayload p, HttpResponse resp) =>
+        app.MapPost("/api/auth/login", (LoginPayload p, HttpContext ctx) =>
         {
+            // 连续失败退避：前 2 次立即回，之后 2^(n-2) 秒（上限 5 分钟），压住暴力破解
+            var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            if (LoginFails.TryGetValue(ip, out var st) && st.Until > DateTime.UtcNow)
+            {
+                var wait = (int)Math.Ceiling((st.Until - DateTime.UtcNow).TotalSeconds);
+                Console.WriteLine($"[webui] 登录被退避：{ip} 连续失败 {st.Count} 次，还需 {wait}s");
+                return Results.Json(new { ok = false, error = $"失败次数过多，请 {wait} 秒后再试" });
+            }
             if (string.IsNullOrWhiteSpace(p.Password) || !FixedTimeEquals(Sha256Hex(p.Password), settings.WebUiPassword))
             {
-                Console.WriteLine($"[webui] 登录失败：密码错误");
+                var n = LoginFails.TryGetValue(ip, out var prev) ? prev.Count + 1 : 1;
+                var delay = n >= 3 ? TimeSpan.FromSeconds(Math.Min(300, Math.Pow(2, Math.Min(n - 2, 9)))) : TimeSpan.Zero;
+                LoginFails[ip] = (n, DateTime.UtcNow + delay);
+                Console.WriteLine($"[webui] 登录失败：密码错误（{ip} 第 {n} 次{(delay > TimeSpan.Zero ? $"，退避 {delay.TotalSeconds:F0}s" : "")}）");
                 return Results.Json(new { ok = false, error = "密码错误" });
             }
-            Console.WriteLine($"[webui] 登录成功");
+            LoginFails.TryRemove(ip, out _);
+            Console.WriteLine($"[webui] 登录成功（{ip}）");
             var cookieOpt = new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, Path = "/" };
             if (p.Remember == true) cookieOpt.MaxAge = TimeSpan.FromDays(30);
-            resp.Cookies.Append("session_token", SessionToken, cookieOpt);
+            ctx.Response.Cookies.Append("session_token", SessionToken, cookieOpt);
             return Results.Json(new { ok = true });
         });
         app.MapPost("/api/auth/logout", (HttpResponse resp) =>
@@ -230,8 +245,52 @@ static class WebUi
                 version = p.Version,
                 desc = p.Description,
                 loaded = p.Loaded,
-                autoLoad = p.AutoLoad
+                autoLoad = p.AutoLoad,
+                source = p.Source,   // ai = AI 生成 / manual = pb_build 手工 / handmade = 无生成记录
+                model = p.Model
             })));
+
+        // ---- 插件：重新搜索目录（把手工拷进来的插件目录识别出来）----
+        app.MapPost("/api/plugins/rescan", () =>
+        {
+            var (total, loaded) = plugins.Rescan();
+            return Results.Json(new { ok = true, total, loaded });
+        });
+
+        // ---- 插件：上传 zip 安装（解压到 plugins/<名>/ → 覆盖同名旧版 → 自动加载）----
+        app.MapPost("/api/plugins/upload", async (HttpRequest req) =>
+        {
+            if (!req.HasFormContentType || req.Form.Files.Count == 0)
+                return Results.Json(new { ok = false, error = "请选择 .zip 文件" });
+
+            var file = req.Form.Files[0];
+            if (!file.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                return Results.Json(new { ok = false, error = "仅支持 .zip（把插件目录打包成压缩包上传）" });
+            if (file.Length == 0)
+                return Results.Json(new { ok = false, error = "文件为空" });
+
+            try
+            {
+                await using var stream = file.OpenReadStream();
+                var fallback = Path.GetFileNameWithoutExtension(file.FileName);
+                var r = await plugins.InstallFromZipAsync(stream, fallback, load: true);
+                return Results.Json(new
+                {
+                    ok = r.Ok,
+                    name = r.Name,
+                    fileCount = r.FileCount,
+                    loaded = r.Loaded,
+                    warnings = r.Warnings,
+                    message = r.Message,
+                    error = r.Ok ? null : r.Message
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[webui] 插件 zip 安装失败: {ex}");
+                return Results.Json(new { ok = false, error = ex.Message });
+            }
+        });
 
         app.MapPost("/api/plugins/{name}/{action}", async (string name, string action) =>
         {
@@ -386,7 +445,7 @@ static class WebUi
             wsUrl = settings.WsUrl,
             token = settings.Token,
             ownerUin = settings.OwnerUin,
-            adminUins = settings.AdminUins.Where(x => x > 0 && x != settings.OwnerUin).ToList(),
+            adminUins = settings.ExtraAdminUins.Where(x => x > 0 && x != settings.OwnerUin).ToList(),
             memoryDir = settings.MemoryDir,
             reloadPluginsAfterSave = settings.ReloadPluginsAfterSave,
             napCatCmd = settings.NapCatCmd,
@@ -394,7 +453,6 @@ static class WebUi
             logDir = settings.LogDir,
             isolateDependencyLogs = settings.IsolateDependencyLogs,
             webUiPort = settings.WebUiPort,
-            webUiBindAll = settings.WebUiBindAll,
             webUiPasswordSet = !string.IsNullOrWhiteSpace(settings.WebUiPassword),
             pluginAutoload = plugins.GetSnapshot().ToDictionary(p => p.Name, p => p.AutoLoad)
         }));
@@ -411,7 +469,7 @@ static class WebUi
                 if (p.AdminUins is not null)
                 {
                     var admins = p.AdminUins.Where(x => x > 0 && x != settings.OwnerUin).Distinct().ToList();
-                    settings.AdminUins = admins;
+                    settings.ExtraAdminUins = admins;
                 }
                 if (settings.OwnerUin <= 0)
                     return Results.Json(new { ok = false, error = "必须设置机器人主人 QQ。" });
@@ -427,13 +485,6 @@ static class WebUi
                     var port = p.WebUiPort.Value;
                     if (port < 0 || port > 65535) return Results.Json(new { ok = false, error = "WebUI 端口必须在 1-65535 之间（0 表示自动）。" });
                     settings.WebUiPort = port;
-                }
-                if (p.WebUiBindAll.HasValue)
-                {
-                    // 公网暴露强制要求密码已设（本次或之前）
-                    if (p.WebUiBindAll.Value && string.IsNullOrWhiteSpace(settings.WebUiPassword) && string.IsNullOrEmpty(p.WebUiPassword))
-                        return Results.Json(new { ok = false, error = "公网绑定必须同时设置登录密码。" });
-                    settings.WebUiBindAll = p.WebUiBindAll.Value;
                 }
                 if (p.WebUiPassword is not null)
                 {
@@ -579,7 +630,7 @@ static class WebUi
         bool? ReloadPluginsAfterSave,
         Dictionary<string, bool>? PluginAutoload, bool? ReloadPlugins,
         string? NapCatCmd, string? LLBotCmd, string? LogDir, bool? IsolateDependencyLogs,
-        int? WebUiPort, bool? WebUiBindAll, string? WebUiPassword);
+        int? WebUiPort, string? WebUiPassword);
     private sealed record TestModelPayload(string? ApiKey, string? BaseUrl, string? Model);
     private sealed record InstructionsPayload(string? Text, bool? Reload);
 
@@ -599,7 +650,7 @@ static class WebUi
         // 尝试绑定配置端口
         try
         {
-            var listener = new TcpListener(IPAddress.Loopback, configPort);
+            var listener = new TcpListener(IPAddress.Any, configPort);
             listener.Start();
             listener.Stop();
             return configPort;
@@ -613,7 +664,7 @@ static class WebUi
 
     private static int GetFreePort()
     {
-        var l = new TcpListener(IPAddress.Loopback, 0);
+        var l = new TcpListener(IPAddress.Any, 0);
         l.Start();
         var port = ((IPEndPoint)l.LocalEndpoint).Port;
         l.Stop();

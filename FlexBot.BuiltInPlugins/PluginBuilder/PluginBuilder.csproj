@@ -11,8 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 契约层（PluginApi 命名空间）已并入宿主，引用宿主项目获得类型 -->
-    <ProjectReference Include="..\..\FlexBot\FlexBot.csproj" ReferenceOutputAssembly="true" ExcludeAssets="runtime" />
+    <!-- 契约层：引用 FlexBot.Abstractions（宿主与全部插件共享同一份契约程序集，不再依赖宿主 exe） -->
+    <ProjectReference Include="..\..\FlexBot.Abstractions\FlexBot.Abstractions.csproj" ReferenceOutputAssembly="true" ExcludeAssets="runtime" />
 
     <!-- v2：不再需要 Roslyn，dotnet build 子进程负责编译 -->
     <ProjectReference Include="..\..\FlexBot.OneBotLib\FlexBot.OneBotLib.csproj" Private="false" />
@@ -20,7 +20,7 @@
   <!-- 宿主已提供的程序集不随插件分发（运行时 PluginLoadContext 回落宿主 ALC 共享）：删副本防膨胀/防版本错乱 -->
   <Target Name="StripHostAssemblies" AfterTargets="Build">
     <ItemGroup>
-      <HostDup Include="$(OutDir)FlexBot.dll;$(OutDir)FlexBot.exe;$(OutDir)FlexBot.pdb;$(OutDir)FlexBot.deps.json;$(OutDir)FlexBot.runtimeconfig.json;$(OutDir)OneBotLib.dll;$(OutDir)OneBotLib.pdb;$(OutDir)Photino.NET.dll" />
+      <HostDup Include="$(OutDir)FlexBot.dll;$(OutDir)FlexBot.exe;$(OutDir)FlexBot.pdb;$(OutDir)FlexBot.deps.json;$(OutDir)FlexBot.runtimeconfig.json;$(OutDir)FlexBot.Abstractions.dll;$(OutDir)FlexBot.Abstractions.pdb;$(OutDir)OneBotLib.dll;$(OutDir)OneBotLib.pdb;$(OutDir)Photino.NET.dll" />
     </ItemGroup>
     <Delete Files="@(HostDup)" ContinueOnError="true" />
     <RemoveDir Directories="$(OutDir)runtimes" ContinueOnError="true" />

@@ -9,6 +9,9 @@ using OneBotLib.Events;
 // ===================== 初始化 =====================
 
 // 全局日志：每行自动带时间戳（HH:mm:ss.fff）+ 进入环形缓冲（WebUI 用）
+// 必须在捕获 Console.Out 之前切 UTF-8：writer 的编码在创建时固定，
+// 之后再改 OutputEncoding 不会影响已捕获的 writer（中文 Windows 默认 GBK 会导致乱码）
+try { Console.OutputEncoding = Encoding.UTF8; } catch { }
 var _origOut = Console.Out;
 Console.SetOut(new TimestampWriter(_origOut));
 

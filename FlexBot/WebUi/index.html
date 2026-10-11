@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>FlexBot 控制台</title>
-<link rel="stylesheet" href="/app.css?v=32">
+<link rel="stylesheet" href="/app.css?v=36">
 </head>
 <body>
 <div id="bgLayer"></div>
@@ -82,6 +82,13 @@
         <div class="pagetools">
           <span class="chip" id="plugCount">…</span>
           <span style="flex:1"></span>
+          <button class="btn tonal small" id="plugRefresh" title="重新搜索 plugins/ 目录（识别手工拷入的插件）">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 4a6 6 0 1 0 3.5 10.9l4.3 4.3 1.4-1.4-4.3-4.3A6 6 0 0 0 10 4zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/></svg>刷新
+          </button>
+          <button class="btn filled small" id="plugAdd" title="上传插件 zip（解压到 plugins/&lt;名&gt;/ 并自动加载）">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h6l2 2h8a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm8 5h-2v2H8v2h2v2h2v-2h2v-2h-2V9z"/></svg>添加插件
+          </button>
+          <input type="file" id="plugZip" accept=".zip,application/zip" hidden>
           <button class="btn tonal small" id="reloadAll">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>重载全部
           </button>
@@ -167,11 +174,10 @@
           </div>
           <div class="card">
             <h3><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm0-13a1 1 0 0 0-1 1v4a1 1 0 0 0 2 0V8a1 1 0 0 0-1-1zm0 9a1 1 0 1 0 1 1 1 1 0 0 0-1-1z"/></svg>WebUI 端口</h3>
-            <div class="desc">端口与访问控制；公网暴露必须设密码</div>
+            <div class="desc">端口与访问控制；WebUI 默认绑定 0.0.0.0 公网可达，务必设置密码</div>
             <div style="display:flex;flex-direction:column;gap:14px">
               <div class="tf"><input id="cfgWebUiPort" type="number" placeholder="0" min="0" max="65535"><label>WebUI 端口（0=自动，重启生效）</label></div>
               <div class="tf"><input id="cfgWebUiPwd" type="password" placeholder=" "><label>登录密码（留空不改；- 清除）</label></div>
-              <label class="switch"><input type="checkbox" id="cfgBindAll"><span class="track"><span class="thumb"></span></span>公网可访问（0.0.0.0，重启生效）</label>
             </div>
           </div>
         </div>
@@ -216,6 +222,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=32"></script>
+<script src="/app.js?v=36"></script>
 </body>
 </html>

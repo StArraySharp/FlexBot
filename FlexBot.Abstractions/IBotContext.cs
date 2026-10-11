@@ -35,6 +35,9 @@ public interface IBotContext : IDisposable
     /// <summary>共享 HTTP 客户端（统一 UA/超时/解压）</summary>
     SharedHttp Http { get; }
 
+    /// <summary>宿主编译服务（把 C# 源码编译为内存程序集；插件工厂等动态产出代码的场景用）</summary>
+    ICompilerService Compiler { get; }
+
     /// <summary>读取本插件设置（未设置时返回 defaultValue；WebUI 保存后对新读取立即生效）</summary>
     T GetSetting<T>(string key, T? defaultValue = default);
 

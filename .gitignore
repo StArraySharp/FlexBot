@@ -482,4 +482,18 @@ $RECYCLE.BIN/
 *.swp
 
 memory
-*sh
+*.sh
+
+# ===================== FlexBot 运行时产物 =====================
+# 插件运行时状态：脚本编译缓存 / 下载的 NuGet 依赖 / 源码快照 / 生成日志 / AI 审计台账 / 插件设置（可能含密钥）
+# 正常位于 FlexBot/bin/**/plugins/ 下（已被 [Bb]in/ 覆盖），这里兜底防"从仓库根运行宿主"时误入库
+**/plugins/*/.cache/
+**/plugins/*/libs/
+**/plugins/*/backups/
+**/plugins/*/.pending/
+**/plugins/*/generation.log
+**/plugins/*/generation.llm.jsonl
+**/plugins/*/settings.json
+
+# 可直接安装的样例包：由 samples/<名>/ 重新打包即可，不入库
+samples/*.zip

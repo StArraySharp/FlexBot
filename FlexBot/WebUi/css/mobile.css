@@ -48,7 +48,7 @@
   /* 弹窗近全屏 */
   .modal { width: 96vw; max-height: 92vh; }
   .mhead { padding: 14px 18px 10px; }
-  .mbody { padding: 2px 18px 12px; }
+  .mbody { padding: 16px 18px 12px; } /* 顶部同样要给浮动 label 留 ≥13px，否则首个字段 label 被裁 */
   .mfoot { padding: 12px 18px 14px; flex-wrap: wrap; }
   /* 日志工具行换行 */
   #logtools { gap: 8px; }

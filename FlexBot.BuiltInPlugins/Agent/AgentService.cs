@@ -186,9 +186,8 @@ class AgentService
         var convLock = _convLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await convLock.WaitAsync();
         Interlocked.Increment(ref _inflight);
-        _tools.CurrentCallerUin = callerUin;
-        _tools.CurrentCallerName = callerName;
-        _tools.CurrentGroupId = groupId;
+        // 本轮上下文（AsyncLocal）：身份/群号随 await 链流入本轮的工具调用，各轮相互隔离
+        CurrentTurn.Value = new TurnContext { CallerUin = callerUin, CallerName = callerName, GroupId = groupId };
         try
         {
             _tools.SearchCount = 0; // 每轮对话重置搜索计数
@@ -288,9 +287,8 @@ class AgentService
         finally
         {
             Interlocked.Decrement(ref _inflight);
-            _tools.CurrentCallerUin = 0;
-            _tools.CurrentCallerName = "";
-            _tools.CurrentGroupId = 0;
+            // 清空本轮上下文：这一步是并发隔离的关键（AsyncLocal 留残留会被后续调用读到）
+            CurrentTurn.Value = null;
             convLock.Release();
         }
     }
@@ -312,6 +310,7 @@ class AgentService
         List<MCAIChatMessage> messages, StreamEvent onStream)
     {
         var sbAnswer = new StringBuilder();
+        var sbRound = new StringBuilder();   // 本轮（下一次工具调用之前）的助手文本，供插件工厂审计
         AgentResponse? resp = null;
         try
         {
@@ -320,6 +319,9 @@ class AgentService
                 // 工具调用上报（函数名+参数前 120 字符）
                 foreach (var call in update.Contents.OfType<FunctionCallContent>())
                 {
+                    // 快照"本次调用之前的助手文本"：工具桥写 .llm.json 时会读它
+                    _tools.LastToolRoundText = sbRound.ToString().Trim();
+                    sbRound.Clear();
                     var argBrief = call.Arguments is { Count: > 0 }
                         ? string.Join(" ", call.Arguments.Select(kv => $"{kv.Key}={kv.Value}")) : "";
                     if (argBrief.Length > 120) argBrief = argBrief[..120] + "…";
@@ -330,6 +332,7 @@ class AgentService
                 if (!string.IsNullOrEmpty(txt))
                 {
                     sbAnswer.Append(txt);
+                    sbRound.Append(txt);
                     onStream("text", txt);
                 }
             }

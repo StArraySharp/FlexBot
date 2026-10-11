@@ -21,9 +21,15 @@ function renderPlugins(list) {
       const card = document.createElement('div');
       card.className = 'pcard' + (p.loaded ? '' : ' off');
       const icon = `<div class="icon">${p.name[0].toUpperCase()}</div>`;
-      const tags = p.loaded
+      // 来源徽标：ai = AI 生成（带审计），manual = pb_build 手工生成；handmade（内置/手工放入/zip）不显示
+      const originBadge = p.source === 'ai'
+        ? `<span class="tag ai" title="AI 生成${p.model ? ' · ' + p.model : ''}（!pb_build llm ${p.name} 看完整记录）">AI 生成</span>`
+        : p.source === 'manual'
+          ? `<span class="tag manual" title="由 pb_build 手工生成（有生成日志）">手写</span>`
+          : '';
+      const tags = originBadge + (p.loaded
         ? `<span class="tag">已加载</span>${p.autoLoad ? '' : '<span class="tag noauto">自启关</span>'}`
-        : `<span class="tag off">未加载</span>`;
+        : `<span class="tag off">未加载</span>`);
       const ops = p.loaded
         ? `<button class="btn tonal small" data-op="reload" data-name="${p.name}">重载</button>
            <button class="btn err-tonal small" data-op="unload" data-name="${p.name}">卸载</button>`
@@ -83,6 +89,55 @@ $('reloadAll').onclick = async () => {
     await fetch(`/api/plugins/${p.name}/reload`, { method: 'POST' });
   toast('全部插件已重载');
   pollPlugins();
+};
+
+/* ---------- 刷新（重新搜索插件目录） ---------- */
+$('plugRefresh').onclick = async () => {
+  const btn = $('plugRefresh');
+  btn.disabled = true;
+  toast('重新搜索插件目录…');
+  try {
+    const d = await (await fetch('/api/plugins/rescan', { method: 'POST' })).json();
+    lastPlugJson = '';            // 强制重建卡片（否则指纹未变会跳过渲染）
+    await pollPlugins();
+    toast(`发现 ${d.total} 个插件 · 已加载 ${d.loaded}`);
+  } catch (e) {
+    toast('刷新失败: ' + e);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+/* ---------- 添加插件（上传 zip） ---------- */
+$('plugAdd').onclick = () => $('plugZip').click();
+
+$('plugZip').onchange = async () => {
+  const input = $('plugZip');
+  const file = input.files && input.files[0];
+  input.value = '';               // 置空以便重复选择同一个文件
+  if (!file) return;
+
+  const btn = $('plugAdd');
+  btn.disabled = true;
+  toast(`上传 ${file.name}（${(file.size / 1024).toFixed(0)} KB）…`);
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const d = await (await fetch('/api/plugins/upload', { method: 'POST', body: fd })).json();
+    if (d.ok) {
+      lastPlugJson = '';
+      await pollPlugins();
+      const warn = d.warnings && d.warnings.length ? `（⚠ ${d.warnings.length} 条提醒，详见控制台）` : '';
+      toast((d.message || `已添加 ${d.name}`) + warn);
+      if (d.warnings && d.warnings.length) console.warn('[plugAdd] 提醒:', d.warnings);
+    } else {
+      toast(d.error || '添加失败');
+    }
+  } catch (e) {
+    toast('上传失败: ' + e);
+  } finally {
+    btn.disabled = false;
+  }
 };
 
 
