@@ -270,6 +270,12 @@ FlexBot.BuiltInPlugins/  # 内置插件源码
 samples/csx-json/        # csx 脚本插件示例（NuGet 依赖 + 生成审计）
 ```
 
+## 文档
+
+- [插件 API 参考](docs/plugin-api.md)：`IBotPlugin` / `IBotContext` / `IBotApi` 契约、消息模型、Hub、内置服务、设置项、两条通道的能力差异
+- [宿主 HTTP API](docs/http-api.md)：认证方式、全部端点与请求响应、静态资源热更新语义
+- [文档目录](docs/README.md)：5 分钟写出第一个插件 + 目录/清单约定
+
 ## 许可
 
 本项目以 **GNU Affero General Public License v3.0（AGPL-3.0）** 授权，完整条款见仓库根目录的 [`LICENSE`](LICENSE)。

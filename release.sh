@@ -95,6 +95,7 @@ find "$plug_root" -type f \( -name 'FlexBot.dll' -o -name 'FlexBot.exe' -o -name
   -o -name 'OneBotLib.dll' -o -name 'Photino.NET.dll' -o -name '*.pdb' \) -delete
 find "$plug_root" -type d \( -name 'libs' -o -name '.cache' -o -name 'backups' \) -exec rm -rf {} + 2>/dev/null || true
 cp "$REPO/THIRD-PARTY-NOTICES.txt" "$plug_root/THIRD-PARTY-NOTICES.txt"
+cp "$REPO/LICENSE" "$plug_root/LICENSE"
 rm -f "$plug_root"/plugins/*/config.json "$plug_root"/plugins/*/settings.json
 plug_unzip_mb=$(du -sm "$plug_root" | cut -f1)
 zip_dir "$plug_root" "$OUT_ROOT/FlexBot-BuiltInPlugins-${VER}.zip"
