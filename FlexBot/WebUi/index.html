@@ -107,11 +107,27 @@
         </div>
         <div class="cfggrid">
           <div class="card">
-            <h3><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8V2zm7 0v3h3v2h-3v3h-2V7h-3V5h3V2h2z"/></svg>连接 · OneBot / NapCat</h3>
-            <div class="desc">保存后若地址或令牌变更将自动重连</div>
+            <h3><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8V2zm7 0v3h3v2h-3v3h-2V7h-3V5h3V2h2z"/></svg>连接 · 通道</h3>
+            <div class="desc">通道决定走哪条链路，切换后需重启宿主生效；下面两项仅 onebot 通道使用</div>
             <div style="display:flex;flex-direction:column;gap:14px">
-              <div class="tf"><input id="cfgWs" placeholder=" "><label>WebSocket 地址</label></div>
+              <div class="field">
+                <label style="font-size:12px;color:var(--on-surface-var)">机器人通道</label>
+                <select class="mselect" id="cfgTransport">
+                  <option value="onebot">OneBot 11 · LLBot / NapCat（功能最全）</option>
+                  <option value="official">QQ 官方机器人开放平台（合规，能力为子集）</option>
+                </select>
+              </div>
+              <div class="tf"><input id="cfgWs" placeholder=" "><label>WebSocket 地址（OneBot）</label></div>
               <div class="tf"><input id="cfgToken" placeholder=" " type="password"><label>访问令牌（可空）</label></div>
+            </div>
+          </div>
+          <div class="card">
+            <h3><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>官方机器人（QQ 开放平台）</h3>
+            <div class="desc">通道选 official 时使用；AppSecret 等同机器人密码，不回显（留空=不修改，填 - 清除）。凭据变更需重启宿主</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="tf"><input id="cfgOfficialAppId" placeholder=" "><label>官方机器人 AppID（数字）</label></div>
+              <div class="tf"><input id="cfgOfficialSecret" placeholder=" " type="password" autocomplete="off"><label>官方机器人 AppSecret</label></div>
+              <label class="switch"><input type="checkbox" id="cfgOfficialSandbox" checked><span class="track"><span class="thumb"></span></span>沙箱环境（未上架时用）</label>
             </div>
           </div>
           <div class="card">

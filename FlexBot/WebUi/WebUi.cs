@@ -481,6 +481,10 @@ static class WebUi
             isolateDependencyLogs = settings.IsolateDependencyLogs,
             webUiPort = settings.WebUiPort,
             webUiPasswordSet = !string.IsNullOrWhiteSpace(settings.WebUiPassword),
+            transport = settings.Transport,
+            officialAppId = settings.OfficialAppId,
+            officialSandbox = settings.OfficialSandbox,
+            officialAppSecretSet = !string.IsNullOrWhiteSpace(settings.OfficialAppSecret),   // 密钥不回显（只告诉是否已设置）
             pluginAutoload = plugins.GetSnapshot().ToDictionary(p => p.Name, p => p.AutoLoad)
         }));
 
@@ -488,6 +492,7 @@ static class WebUi
         {
             var oldWs = settings.WsUrl;
             var oldToken = settings.Token;
+            var oldTransport = settings.Transport;
             try
             {
                 if (p.WsUrl is not null) settings.WsUrl = p.WsUrl.Trim();
@@ -518,6 +523,22 @@ static class WebUi
                     var pwdRaw = p.WebUiPassword.Trim();
                     // "-" = 清除密码（关认证）；否则存 SHA256（不落明文）
                     settings.WebUiPassword = pwdRaw == "-" ? "" : Sha256Hex(pwdRaw);
+                }
+                // 通道：onebot（LLBot/NapCat）或 official（QQ 官方机器人）；改完需重启宿主生效
+                if (p.Transport is not null)
+                {
+                    var t = p.Transport.Trim().ToLowerInvariant();
+                    if (t is not ("onebot" or "official"))
+                        return Results.Json(new { ok = false, error = "通道只能是 onebot 或 official。" });
+                    settings.Transport = t;
+                }
+                if (p.OfficialAppId is not null) settings.OfficialAppId = p.OfficialAppId.Trim();
+                if (p.OfficialSandbox.HasValue) settings.OfficialSandbox = p.OfficialSandbox.Value;
+                // 官方机器人密钥：留空=不修改；"-"=清除（与 WebUI 密码同规矩，且从不回显）
+                if (!string.IsNullOrEmpty(p.OfficialAppSecret))
+                {
+                    var sec = p.OfficialAppSecret.Trim();
+                    settings.OfficialAppSecret = sec == "-" ? "" : sec;
                 }
                 settings.NormalizeAccessSettings();
                 settings.Save();
@@ -551,7 +572,9 @@ static class WebUi
                 }));
             }
 
-            return Results.Json(new { ok = true, wsChanged, reloaded });
+            // 通道变更只在下次启动生效（当前进程已在用某条通道），前端据此提示"需重启"
+            var transportChanged = settings.Transport != oldTransport;
+            return Results.Json(new { ok = true, wsChanged, reloaded, transportChanged });
         });
 
         // ===================== 模型测试 =====================
@@ -657,7 +680,8 @@ static class WebUi
         bool? ReloadPluginsAfterSave,
         Dictionary<string, bool>? PluginAutoload, bool? ReloadPlugins,
         string? NapCatCmd, string? LLBotCmd, string? LogDir, bool? IsolateDependencyLogs,
-        int? WebUiPort, string? WebUiPassword);
+        int? WebUiPort, string? WebUiPassword,
+        string? Transport, string? OfficialAppId, string? OfficialAppSecret, bool? OfficialSandbox);
     private sealed record TestModelPayload(string? ApiKey, string? BaseUrl, string? Model);
     private sealed record InstructionsPayload(string? Text, bool? Reload);
 

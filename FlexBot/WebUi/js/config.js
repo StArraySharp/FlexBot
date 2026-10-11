@@ -17,6 +17,10 @@ async function loadConfig() {
     $('cfgLLBotCmd').value = c.llBotCmd || '';
     $('cfgLogDir').value = c.logDir || '';
     $('cfgIsolateLogs').checked = c.isolateDependencyLogs !== false;
+    $('cfgTransport').value = c.transport || 'onebot';
+    $('cfgOfficialAppId').value = c.officialAppId || '';
+    $('cfgOfficialSandbox').checked = c.officialSandbox !== false;
+    $('cfgOfficialSecret').value = '';            // 官方密钥不回显（服务端只告诉是否已设置）
     $('cfgWebUiPort').value = c.webUiPort || '';
     $('cfgWebUiPwd').value = ''; // 密码不回显（服务端只存 SHA256）
     // 注意：不设 placeholder——浮动 label 会与 placeholder 文字重叠；说明在下方 desc 行
@@ -49,6 +53,10 @@ $('cfgSave').onclick = async () => {
       llBotCmd: v('cfgLLBotCmd'),
       logDir: v('cfgLogDir'),
       isolateDependencyLogs: $('cfgIsolateLogs').checked,
+      transport: v('cfgTransport'),
+      officialAppId: v('cfgOfficialAppId'),
+      officialSandbox: $('cfgOfficialSandbox').checked,
+      ...($('cfgOfficialSecret').value.length > 0 ? { officialAppSecret: $('cfgOfficialSecret').value } : {}),
       webUiPort: webUiPort,
       ...($('cfgWebUiPwd').value.length > 0 ? { webUiPassword: $('cfgWebUiPwd').value } : {}),
       pluginAutoload: d.pluginAutoload || {},
@@ -66,6 +74,7 @@ $('cfgSave').onclick = async () => {
     let msg = '已保存';
     if (r.reloaded && r.reloaded.length) msg += `，重载: ${r.reloaded.join(', ')}`;
     if (r.wsChanged) msg += '，正在用新地址重连';
+    if (r.transportChanged) msg += '，通道已改：重启宿主后生效';
     $('cfgMsg').textContent = msg; toast(msg);
     scheduleCfgMsgClear();
     pollPlugins();
