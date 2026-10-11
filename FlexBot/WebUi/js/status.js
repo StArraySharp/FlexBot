@@ -11,7 +11,9 @@ async function pollStatus() {
     chip.classList.toggle('on', d.connected);
     $('stChipTxt').textContent = d.connected ? '已连接' : '已断开';
     $('dConn').innerHTML = d.connected ? '<small style="color:var(--success)">● 在线</small>' : '<small style="color:var(--error)">● 离线重试中</small>';
-    $('dWs').textContent = d.wsUrl;
+    const official = d.transport === 'official';
+    $('dWs').textContent = official ? 'QQ 官方机器人开放平台' : d.wsUrl;
+    $('dTrans').textContent = official ? '官方 API' : 'OneBot 11';
     $('dSelf').textContent = d.selfId || '未登录';
     $('dStart').textContent = '启动于 ' + d.startedAt;
     $('dUp').textContent = fmtUp(d.uptimeSec);

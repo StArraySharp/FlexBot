@@ -26,7 +26,7 @@ static class WebUi
     [
         // JS 顺序敏感：nav（页面切换/工具）→ 日志/状态/插件/配置 → 外观 → 认证 → 快捷命令 → main（轮询入口）
         "js/nav.js", "js/logs.js", "js/status.js", "js/plugins.js",
-        "js/config.js", "js/appearance.js", "js/auth.js", "js/quickcmd.js", "js/main.js",
+        "js/config.js", "js/appearance.js", "js/auth.js", "js/main.js",
         // CSS 顺序：变量/基础 → 侧栏 → 通用组件 → 页面 → 移动端
         "css/base.css", "css/nav.css", "css/components.css", "css/pages.css", "css/mobile.css",
     ];
@@ -246,6 +246,7 @@ static class WebUi
             connected = BotState.Connected,
             selfId = BotState.SelfId,
             wsUrl = settings.WsUrl,
+            transport = client.TransportName,
             startedAt = BotState.StartedAt.ToString("yyyy-MM-dd HH:mm:ss"),
             uptimeSec = (long)(DateTime.Now - BotState.StartedAt).TotalSeconds
         }));

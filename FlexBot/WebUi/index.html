@@ -53,22 +53,9 @@
       <section class="page show" id="page-dash">
         <div class="statgrid">
           <div class="stat"><div class="k">连接状态</div><div class="v" id="dConn">…</div><div class="k" id="dWs">…</div></div>
-          <div class="stat"><div class="k">机器人账号</div><div class="v" id="dSelf">…</div><div class="k">OneBot 协议</div></div>
+          <div class="stat"><div class="k">机器人账号</div><div class="v" id="dSelf">…</div><div class="k" id="dTrans">机器人通道</div></div>
           <div class="stat"><div class="k">运行时长</div><div class="v" id="dUp">…</div><div class="k" id="dStart">…</div></div>
           <div class="stat"><div class="k">已加载插件</div><div class="v" id="dPlug">…</div><div class="k">plugins/ 目录</div></div>
-        </div>
-        <div class="card">
-          <h3>快捷命令</h3>
-          <div class="desc">直接执行宿主命令</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <div class="tf" style="flex:1;min-width:260px"><input id="dCmd" placeholder=" " autocomplete="off"><label>输入命令…</label></div>
-            <button class="btn filled" id="dSend">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 20.5 22 12 3 3.5 3 10l12 2-12 2z"/></svg>执行
-            </button>
-            <button class="btn tonal" data-cmd="!plugin list">插件列表</button>
-            <button class="btn tonal" data-cmd="!plugin reload Chat">重载 Chat</button>
-          </div>
-          <div id="dCmdOut" class="minilog" style="margin-top:12px;display:none"></div>
         </div>
         <div class="card">
           <h3>最近日志</h3>
