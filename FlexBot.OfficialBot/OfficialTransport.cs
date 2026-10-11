@@ -49,14 +49,6 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
     private readonly ConcurrentDictionary<long, string> _msgIdBack = new();
     private QQBotSocketClient? _client;
     private long _msgSeq;
-    private static readonly string[] Unsupported =
-    [
-        "SendGroupForwardMsgAsync", "SendPrivateForwardMsgAsync", "SetMsgEmojiLikeAsync", "SetGroupBanAsync",
-        "SetGroupWholeBanAsync", "SetGroupKickAsync", "SetGroupCardAsync", "SetGroupSpecialTitleAsync",
-        "SendGroupNoticeAsync", "SetGroupLeaveAsync", "GetGroupInfoAsync", "GetFriendListAsync",
-        "UploadGroupFileAsync", "SetFriendAddRequestAsync", "SetGroupAddRequestAsync", "GetMsgAsync",
-        "GetGroupMsgHistoryAsync", "GroupPokeAsync", "CallApiAsync"
-    ];
 
     public OfficialTransport(OfficialTransportOptions opt)
     {
@@ -68,7 +60,6 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
 
     public string TransportName => "official";
     public long SelfId { get; private set; }
-    public string? LastError { get; private set; }
 
     // ===================== 生命周期 =====================
 
@@ -553,7 +544,7 @@ public sealed class OfficialTransport : IBotTransport, IIdentityBinder
 
     private Task<ApiResult<T>> Fail<T>(string what)
     {
-        var r = ApiResult<T>.Fail($"官方通道不支持：{what}（{nameof(Unsupported)} 一期边界，切回 OneBot 通道可用）");
+        var r = ApiResult<T>.Fail($"官方通道不支持：{what}（一期能力边界，切回 OneBot 通道可用）");
         Log($"调用被拒：{what}");
         return Task.FromResult(r);
     }

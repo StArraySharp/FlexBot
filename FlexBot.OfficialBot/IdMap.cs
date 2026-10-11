@@ -111,15 +111,4 @@ sealed class IdMap(string path)
         lock (_gate) return _bound.TryGetValue(syntheticId, out var qq) ? qq : syntheticId;
     }
 
-    /// <summary>反查：真实 QQ 号 → openid（主动发私聊时用）</summary>
-    public bool TryOpenIdOfQq(long qq, out string openId)
-    {
-        lock (_gate)
-        {
-            foreach (var (sid, bound) in _bound)
-                if (bound == qq && _back.TryGetValue(sid, out var o)) { openId = o; return true; }
-        }
-        openId = "";
-        return false;
-    }
 }
