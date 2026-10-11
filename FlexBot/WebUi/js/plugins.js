@@ -182,11 +182,10 @@ function getFK(k) { return document.querySelector(`#psetForm [data-k="${k}"]`)?.
 function renderFbList(container, list, onsync) {
   if (!list.length) { container.innerHTML = '<div class="visionhint">（空：主模型失败时直接返回错误）</div>'; return; }
   container.innerHTML = list.map((f, i) => `
-    <div class="fbrow" data-fb-i="${i}" style="display:grid;grid-template-columns:1fr 1fr 1fr auto auto;gap:8px;align-items:end">
+    <div class="fbrow" data-fb-i="${i}" style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end">
       <div class="tf"><input data-fb-base value="${plugEsc(f.baseUrl || '')}" placeholder=" "><label>Base URL</label></div>
       <div class="tf"><input data-fb-model value="${plugEsc(f.model || '')}" placeholder=" "><label>模型名</label></div>
       <div class="tf"><input data-fb-key type="password" value="${plugEsc(f.apiKey || '')}" placeholder=" " autocomplete="off"><label>API Key（空=主Key）</label></div>
-      <button class="btn tonal small" type="button" data-fb-one style="height:48px">测试</button>
       <button class="btn err-tonal small" type="button" data-fb-del style="height:48px">✕</button>
     </div>`).join('');
   const sync = () => {
@@ -202,17 +201,6 @@ function renderFbList(container, list, onsync) {
   container.querySelectorAll('[data-fb-del]').forEach(btn => btn.onclick = () => {
     list.splice(+btn.closest('[data-fb-i]').dataset.fbI, 1);
     renderFbList(container, list, onsync); onsync();
-  });
-  container.querySelectorAll('[data-fb-one]').forEach((btn, idx) => btn.onclick = async () => {
-    btn.disabled = true; btn.textContent = '…';
-    try {
-      const r = await (await fetch('/api/test-model', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: list[idx].apiKey || getFK('ApiKey'), baseUrl: list[idx].baseUrl, model: list[idx].model })
-      })).json();
-      toast(r.ok ? `✓ ${list[idx].model} 可用` : `✗ ${list[idx].model}: ${(r.error || '').slice(0, 60)}`);
-    } catch (e) { toast('请求失败: ' + e); }
-    finally { btn.disabled = false; btn.textContent = '测试'; }
   });
 }
 
@@ -339,8 +327,6 @@ async function openPSettings(name) {
         <div class="psetlbl">${plugEsc(def.label)}
           <span class="grow"></span>
           <button class="btn ghost small" type="button" data-fb-add>+ 添加</button>
-          <button class="btn tonal small" type="button" data-test-fb>全部测试</button>
-          <span class="visionhint" data-fb-result style="margin:0"></span>
         </div>
         <div data-fb-list style="display:flex;flex-direction:column;gap:14px"></div>
         ${def.description ? `<div class="psetdesc">${plugEsc(def.description)}</div>` : ''}`;
@@ -351,8 +337,6 @@ async function openPSettings(name) {
         renderFbList(row.querySelector('[data-fb-list]'), list, () => writeHidden(row, def.key, list));
         writeHidden(row, def.key, list);
       };
-      row._fbTest = () => { const l = [...list]; return l; };
-      row._fbOut = row.querySelector('[data-fb-result]');
     } else if (def.type === 'personas') {
       // 多人格卡片：[{name,enabled,instructions}]，启用单选、增删改
       const list = parseJsonArray(val);
@@ -370,55 +354,14 @@ async function openPSettings(name) {
         writeHidden(row, def.key, list);
       };
     } else {
-      const isModelRow = def.key === 'Model';
       row.innerHTML = `
         <div style="display:flex;gap:10px;align-items:flex-end">
           <div class="tf" style="flex:1"><input data-k="${plugEsc(def.key)}" type="${def.type === 'number' ? 'number' : 'text'}" value="${plugEsc(val)}" placeholder=" "><label>${plugEsc(def.label)}</label></div>
-          ${isModelRow ? '<button class="btn tonal" type="button" data-test-model style="flex:none;height:48px">测试模型</button>' : ''}
         </div>
         ${def.description ? `<div class="psetdesc">${plugEsc(def.description)}</div>` : ''}`;
-      if (isModelRow) {
-        row.querySelector('[data-test-model]').onclick = async ev => {
-          const t = ev.currentTarget;
-          const get = k => form.querySelector(`[data-k="${k}"]`)?.value || '';
-          t.disabled = true; t.textContent = '测试中…';
-          try {
-            const r = await (await fetch('/api/test-model', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ apiKey: get('ApiKey'), baseUrl: get('BaseUrl'), model: get('Model') })
-            })).json();
-            toast(r.ok ? `✓ ${r.model} 连接成功：${(r.reply || '(空回复，reasoning 模型属正常)').slice(0, 40)}` : `✗ 测试失败：${r.error}`);
-          } catch (e) { toast('请求失败: ' + e); }
-          finally { t.disabled = false; t.textContent = '测试模型'; }
-        };
-      }
     }
     form.appendChild(row);
   });
-  // 备用链「全部测试」
-  const fbTestBtn = form.querySelector('[data-test-fb]');
-  if (fbTestBtn) fbTestBtn.onclick = async () => {
-    const row = fbTestBtn.closest('.psetrow');
-    const out = row._fbOut;
-    const list = row._fbTest ? row._fbTest() : [];
-    if (!list.length) { out.textContent = '（空）'; return; }
-    const mainKey = getFK('ApiKey');
-    fbTestBtn.disabled = true;
-    let okN = 0, i = 0;
-    for (const f of list) {
-      i++;
-      try {
-        const r = await (await fetch('/api/test-model', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ apiKey: f.apiKey || mainKey, baseUrl: f.baseUrl, model: f.model })
-        })).json();
-        if (r.ok) okN++;
-      } catch {}
-      out.textContent = `${okN}/${i} 可用…`;
-    }
-    out.textContent = `${okN}/${list.length} 可用`;
-    fbTestBtn.disabled = false;
-  };
   $('psetMsg').textContent = '';
   $('psetOverlay').classList.remove('hidden');
 }

@@ -16,6 +16,9 @@ sealed class TurnContext
     public string AssistantText = "";
     public int SearchCount;
     public string? LastScreenshotPath;
+    /// <summary>本轮已经"提前发到聊天"的模型文本（工具调用前的铺垫）。
+    /// 最终回答里要把这段前缀去掉，否则用户会看到两遍。</summary>
+    public string PostedLead = "";
 }
 
 static class CurrentTurn

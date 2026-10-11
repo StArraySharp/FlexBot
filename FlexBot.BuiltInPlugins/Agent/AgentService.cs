@@ -57,6 +57,9 @@ class AgentService
     // 在途 AI 请求数（卸载时等待归零，避免 ALC 回收后 async 延续跳入已释放代码段）
     private int _inflight;
 
+    /// <summary>是否在每次工具调用前，把模型本轮输出的文本先发到聊天（设置项 NotifyToolCalls，热更新时重建服务生效）</summary>
+    private readonly bool _notifyToolCalls;
+
     public AgentService(IBotContext ctx, BotTools tools)
     {
         _ctx = ctx;
@@ -64,6 +67,7 @@ class AgentService
         _cfg = ctx.Config;
         _tools = tools;
         _memoryDir = ctx.Config.MemoryDir;
+        _notifyToolCalls = ctx.GetSetting("NotifyToolCalls", true);
 
         _instructions = LoadActivePersona();
         if (string.IsNullOrWhiteSpace(_instructions)) _instructions = LoadInstructions();
@@ -305,6 +309,31 @@ class AgentService
 
     // ===================== 流式运行（实时上报 + 回落兜底） =====================
 
+    /// <summary>
+    /// 工具调用前，把模型本轮输出的文本先发到聊天；若本轮没有文本，就只发一行工具名（至少让用户知道它在干活）。
+    /// 发出的文本记进 TurnContext.PostedLead，最终回答里会剥掉这段前缀，避免重复。
+    /// </summary>
+    private async Task NotifyToolCallAsync(TurnContext turn, FunctionCallContent call, string roundText)
+    {
+        try
+        {
+            var sb = new StringBuilder();
+            if (roundText.Length > 0)
+            {
+                sb.Append(roundText);
+                turn.PostedLead += roundText;
+            }
+            sb.Append(sb.Length > 0 ? "\n\n" : "").Append($"🔧 调用工具 {call.Name}");
+
+            var text = sb.ToString();
+            var r = turn.GroupId > 0
+                ? await _api.SendGroupMsgAsync(turn.GroupId, text)
+                : await _api.SendPrivateMsgAsync(turn.CallerUin, text);
+            if (!r.Success) Console.WriteLine($"[ai] 工具调用提示发送失败: {r.ErrorMessage}");
+        }
+        catch (Exception ex) { Console.WriteLine($"[ai] 工具调用提示异常: {ex.Message}"); }
+    }
+
     // 流式主路径：遍历 AgentResponseUpdate，文本增量与工具调用实时回调；失败回落非流式链
     private async Task<(AgentResponse? Resp, string Answer)> RunStreamingWithFallbackAsync(
         List<MCAIChatMessage> messages, StreamEvent onStream)
@@ -320,8 +349,14 @@ class AgentService
                 foreach (var call in update.Contents.OfType<FunctionCallContent>())
                 {
                     // 快照"本次调用之前的助手文本"：工具桥写 .llm.json 时会读它
-                    _tools.LastToolRoundText = sbRound.ToString().Trim();
+                    var roundText = sbRound.ToString().Trim();
                     sbRound.Clear();
+                    _tools.LastToolRoundText = roundText;
+
+                    // 工具调用前：先把模型这段文本发到聊天（开关：插件设置「工具调用提示」）
+                    if (_notifyToolCalls && CurrentTurn.Value is { } turn0)
+                        await NotifyToolCallAsync(turn0, call, roundText);
+
                     var argBrief = call.Arguments is { Count: > 0 }
                         ? string.Join(" ", call.Arguments.Select(kv => $"{kv.Key}={kv.Value}")) : "";
                     if (argBrief.Length > 120) argBrief = argBrief[..120] + "…";
@@ -338,6 +373,9 @@ class AgentService
             }
             // 流式结束后拿完整响应（含 usage 等；脚手架维护的会话由框架缓存）
             var full = sbAnswer.ToString().Trim();
+            // 剥掉"已经提前发到聊天"的前导文本，避免用户在最终回答里再看一遍
+            if (CurrentTurn.Value?.PostedLead is { Length: > 0 } lead && full.StartsWith(lead, StringComparison.Ordinal))
+                full = full[lead.Length..].TrimStart();
             if (full.Length > 0) return (null, full);
             Console.WriteLine("[ai] 流式无文本输出，回落非流式");
         }
