@@ -1,6 +1,6 @@
 # FlexBot
 
-基于 OneBot 11 协议的 QQ 群机器人框架：.NET 10 宿主 + 可热重载的插件体系 + 内嵌 WebUI 管理后台。
+基于 OneBot 11 协议的 QQ 群机器人框架：.NET 10 宿主 + 可热重载的插件体系 + WebUI 管理后台。
 
 ## 特性
 
@@ -9,7 +9,7 @@
   `plugin.json` 写一行 `NuGet` 即自动解析第三方依赖（含传递依赖），全程无外部脚本
 - **AI 智能体**（Agent 插件）：流式分段回复、工具调用（联网搜索/看图/文件工作区/电脑控制/记忆）、多人格、备用模型回落、自动对话总结
 - **AI 生成插件**：群里直接让 AI 生成/修改/删除插件（`pb_create` / `pb_update`），失败诊断（精确到 `文件(行,列)`）自动回喂给模型；每次生成都留完整审计台账与来源标注
-- **内嵌 WebUI**：ASP.NET Core Minimal API + 单文件前端（嵌入宿主 DLL，磁盘零文件），插件管理（含刷新与 zip 安装）、配置、日志、模型测试一站式
+- **WebUI**：ASP.NET Core Minimal API + 无构建前端（静态资源原样放在 `<exe旁>/WebUi/`，**改完 CSS/JS 刷新浏览器即生效，无需重建/重启**），插件管理（含刷新与 zip 安装）、配置、日志、模型测试一站式
 - **电脑控制**（PCControl 插件）：进程/截屏/剪贴板/鼠标/键盘/电源，PowerShell 远程执行
 - **ILSpy 反编译查询**（PluginApi 插件）：聊天里直接查契约层源码，支持**成员级**查询（`member`）与成员搜索
 - **插件工厂**（PluginBuilder 插件）：脚本型免编译直载；编译型默认宿主内存编译（无需 dotnet SDK），可切 `dotnet` 后端
@@ -75,7 +75,7 @@ dotnet run --project FlexBot
   "NapCatCmd": "",                   // 可选：随宿主一键拉起 NapCat 的命令
   "NuGetFeed": "https://api.nuget.org/v3-flatcontainer",  // 插件 NuGet 依赖源（可换私有源/镜像）
   "WebUiPort": 0,                    // 0 = 自动分配空闲端口
-  "WebUiPassword": ""                // 非空即启用 WebUI 登录；WebUI 绑定全部网卡，强烈建议设置
+  "WebUiPassword": ""                // 留空则首次启动自动生成随机密码并打印到**控制台**（明文只打印一次，不写日志）；WebUI 绑定全部网卡，务必不要把端口暴露到公网
 }
 ```
 
@@ -112,7 +112,7 @@ AI 模型配置在 WebUI → 插件 → Agent → 设置（存储于 `plugins/Ag
 | **主人**（`OwnerUin`） | 全部管理员权限；外加独占：`!全员` / `!随机100`、红包私聊通知 |
 | **管理员**（主人 ∪ `AdminUins`） | 所有插件注册的命令；私聊机器人；AI 工具里的 `run_command`（可执行任意宿主/插件命令，含 `!plugin load`）、`send_group_msg`/`send_private_msg`/`send_image`/`download_and_send_file`、关注群增删、`pb_create`/`pb_update`/`pb_delete` 等 |
 | **普通群员** | 在关注群里与 AI 对话；AI 的未门禁工具（联网搜索、记忆、沙箱文件读写）可用；不能触发任何前缀命令 |
-| **WebUI** | 权限**高于管理员**：`/api/command` 直接进插件命令派发、不经宿主门禁，可加载任意插件、改配置。故必须设 `WebUiPassword`，且不要把端口暴露到公网 |
+| **WebUI** | 权限**高于管理员**：`/api/command` 直接进插件命令派发、不经宿主门禁，可加载任意插件、改配置。故登录密码**留空时首启自动生成并打印到控制台**（不会出现无密码状态），且不要把端口暴露到公网 |
 
 宿主对**所有**插件注册命令统一做管理员校验（`Program.cs` 的命令分发），插件内部再对少数危险能力做二次判定；私聊消息仅管理员会被处理。
 
@@ -254,6 +254,7 @@ csproj 模板（关键点：引用 `FlexBot.Abstractions` 且 `ExcludeAssets="ru
 
 - Windows：直接运行 `FlexBot.exe`（含 Photino 桌面窗口模式）
 - Linux：`dotnet publish FlexBot -c Release -r linux-x64` 后运行 `dotnet FlexBot.dll`（仓库不带启动/守护脚本，按需自备 systemd unit 或 supervisor）
+- 发布包**必须带上 `WebUi/` 目录**（与 `FlexBot.dll` 同级）：WebUI 资源现在就放在那里，宿主每次请求都从磁盘读。缺了会在启动日志里逐条列出缺失文件，页面返回 500
 
 ## 目录速览
 
@@ -261,7 +262,7 @@ csproj 模板（关键点：引用 `FlexBot.Abstractions` 且 `ExcludeAssets="ru
 FlexBot/
 ├─ Program.cs / BotClient.cs / PluginManager.cs / Routing.cs / Config.cs
 ├─ Scripting/            # csx 脚本编译前端（Roslyn 内存编译 + 指纹缓存）+ NuGet 依赖解析
-├─ WebUi/                # 内嵌 WebUI（html/js/css 嵌入资源 + Minimal API）
+├─ WebUi/                # WebUI 源码（构建/发布时原样拷到 <输出>/WebUi/；改完刷新即生效）+ Minimal API
 └─ memory/               # 运行数据（构建后生成于输出目录 exe 旁）
 FlexBot.Abstractions/    # 插件契约（IBotPlugin、IBotContext、IBotApi、Hub、服务）
 FlexBot.OneBotLib/       # OneBot 11 协议库

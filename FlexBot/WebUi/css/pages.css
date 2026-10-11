@@ -36,9 +36,41 @@
 .pcard.off .icon { background: color-mix(in srgb, var(--surface-c-highest) calc(var(--ctl-opacity) * 100%), transparent); color: var(--on-surface-var); }
 .pcard .nm { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .pcard .ver { color: var(--on-surface-var); font-size: 12px; }
-.pcard .desc { color: var(--on-surface-var); font-size: 13px; min-height: 40px; }
+/* 文本块必须可收缩，否则长描述会把右上角的图标挤出卡片 */
+.pcard .meta { min-width: 0; flex: 1; }
+/* 描述里常有不可断的长命令串（!pc status|exec|…），必须允许任意位置断行，并限 3 行加省略号 */
+.pcard .desc {
+  color: var(--on-surface-var); font-size: 13px; min-height: 40px;
+  overflow-wrap: anywhere; word-break: break-word;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
 .pcard .row { display: flex; align-items: center; gap: 8px; margin-top: auto; flex-wrap: wrap; }
 .pcard .row .grow { flex: 1; }
+/* 插件卡片：操作收成右上角图标组，底部只留「自启」开关 + 一个状态动作 */
+.pcard .acts { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
+.pcard .ico {
+  width: 34px; height: 34px; border: none; border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--on-surface-var);
+  transition: background .18s, color .18s, opacity .18s;
+}
+.pcard .ico:hover { background: var(--surface-c-highest); color: var(--on-surface); }
+.pcard .ico:disabled { opacity: .38; cursor: default; }
+.pcard .ico svg { width: 18px; height: 18px; }
+.pcard .foot {
+  display: flex; align-items: center; gap: 10px; margin-top: auto;
+  padding-top: 12px; border-top: 1px solid var(--outline-var);
+}
+.pcard .foot .grow { flex: 1; }
+.pcard .state {
+  background: none; border: none; cursor: pointer; font: inherit;
+  font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 999px;
+  color: var(--primary); transition: background .18s, color .18s;
+}
+.pcard .state:hover { background: var(--surface-c-highest); }
+.pcard .state.stop { color: var(--on-surface-var); }
+.pcard .state.stop:hover { color: var(--error); }
+.pcard .state:disabled { opacity: .45; cursor: default; }
 .tag {
   padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
   background: color-mix(in srgb, var(--success-container) calc(var(--ctl-opacity) * 100%), transparent); color: var(--success);

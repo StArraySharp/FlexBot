@@ -103,7 +103,9 @@ class HostSettings
     // ---- WebUI 端口配置 ----
     /// <summary>WebUI 监听端口（1024-65535；不允许常见端口如 80/443/3000 等）；0 表示自动分配</summary>
     public int WebUiPort { get; set; } = 0;
-    /// <summary>WebUI 登录密码；非空时启用登录页认证（WebUI 默认绑定 0.0.0.0，对外暴露强烈建议设置）。</summary>
+    /// <summary>WebUI 登录密码（SHA256 十六进制；手写明文会在启动时自动转为 SHA256）。
+    /// 留空则首次启动**自动生成随机 16 位密码**并打印在控制台（明文只打印一次、不写日志），因此不存在"无密码开放"的窗口。
+    /// 想换密码：WebUI → 设置 → 登录密码。WebUI 绑定 0.0.0.0，不要把端口暴露到公网。</summary>
     public string WebUiPassword { get; set; } = "";
     /// <summary>WebUI 界面（卡片/导航）不透明度百分比 0-100，默认 100。</summary>
     public int WebUiUiOpacity { get; set; } = 100;

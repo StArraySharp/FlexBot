@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -11,7 +13,8 @@ using Microsoft.Extensions.Logging;
 
 namespace FlexBot.WebUi;
 
-// 内嵌 WebUI：本机 HTTP 服务，同一页面供浏览器与 Photino 窗口使用
+// WebUI：本机 HTTP 服务，同一页面供浏览器与 Photino 窗口使用。
+// 静态资源放在 <exe旁>/WebUi/（由 csproj 的 Content 拷贝）——改完刷新浏览器即生效，无需重建/重启。
 // API：GET /api/status | /api/logs?after= | /api/plugins | /api/config | /api/instructions
 //      POST /api/plugins/{name}/{action} | /api/command | /api/logs/clear | /api/config | /api/instructions
 static class WebUi
@@ -51,8 +54,23 @@ static class WebUi
             settings.Save();
             Console.WriteLine("[webui] WebUiPassword 已由明文自动转换为 SHA256 存储");
         }
+        // 首次启动（或密码被清空后）自动生成随机密码：避免"无密码 + 全网卡监听"的裸奔窗口。
+        // 明文只写真实控制台，不走 Console.Out（那个被 TimestampWriter 接到日志文件与环形缓冲了）。
+        if (!authOn)
+        {
+            var plain = GeneratePassword(16);
+            settings.WebUiPassword = Sha256Hex(plain);
+            try { settings.Save(); }
+            catch (Exception ex) { Console.WriteLine($"[webui] 随机密码写入 config.json 失败: {ex.Message}"); }
+            WriteConsoleOnly($"\n[webui] 已生成随机登录密码：{plain}\n"
+                           + "        明文只在控制台打印这一次（已以 SHA256 存入 config.json）。\n"
+                           + "        要改成自己的密码：WebUI → 设置 → 端口与访问控制 → 登录密码\n\n");
+            Console.WriteLine("[webui] 未设置密码，已自动生成随机密码并保存（明文仅打印在控制台，未写入日志）");
+            authOn = true;   // 本次运行即启用认证
+        }
         // 日志里给人看的地址用本机回环（0.0.0.0 不是能直接打开的地址）；实际监听仍是全网卡
     Console.WriteLine($"[webui] 启动 WebUI 在 http://127.0.0.1:{port}（本机；实际监听 0.0.0.0，局域网可访问）{(authOn ? "，已开启登录认证" : "，无密码（建议设置 WebUiPassword）")}");
+    CheckAssets();   // 校验静态资源清单与磁盘是否一致
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddSingleton(plugins);
         builder.Logging.ClearProviders(); // 不让 ASP.NET 日志污染控制台
@@ -98,11 +116,11 @@ static class WebUi
             ctx.Response.Redirect("/login");
         });
 
-        var html = LoadIndex();
-        app.MapGet("/", () => Results.Text(html, "text/html; charset=utf-8"));
+        // 首页与静态资源：每次请求都从磁盘读（<exe旁>/WebUi/），改完 CSS/JS 刷新即生效，不用重启
+        app.MapGet("/", (HttpContext ctx) => RenderHtmlResult(ctx, "index.html"));
 
         // ---- 登录页与认证接口 ----
-        app.MapGet("/login", () => Results.Text(LoadResource("login.html"), "text/html; charset=utf-8"));
+        app.MapGet("/login", (HttpContext ctx) => RenderHtmlResult(ctx, "login.html"));
         app.MapPost("/api/auth/login", (LoginPayload p, HttpContext ctx) =>
         {
             // 连续失败退避：前 2 次立即回，之后 2^(n-2) 秒（上限 5 分钟），压住暴力破解
@@ -145,12 +163,15 @@ static class WebUi
                 return Results.Text(LoadResource(file), ct);
             });
         }
-        app.MapGet("/app.js", () => Results.Text(
-            string.Join("\n", UiAssets.Where(f => f.StartsWith("js/")).Select(LoadResource)),
-            "application/javascript; charset=utf-8"));
-        app.MapGet("/app.css", () => Results.Text(
-            string.Join("\n", UiAssets.Where(f => f.StartsWith("css/")).Select(LoadResource)),
-            "text/css; charset=utf-8"));
+        // 注意：这里必须用"同步返回 IResult"的 lambda。若写成 async lambda（返回 Task<IResult>），
+        // 它同时可转成 RequestDelegate(Func<HttpContext,Task>)，MapGet 会选中那个重载并**丢弃 IResult**，
+        // 表现为 200 + 空响应体（handler 照常执行，只是没人把结果写出去）。
+        app.MapGet("/app.js", (HttpContext ctx) => ServeBundle(
+            ctx, "application/javascript; charset=utf-8",
+            string.Join("\n", UiAssets.Where(f => f.StartsWith("js/")).Select(LoadResource))));
+        app.MapGet("/app.css", (HttpContext ctx) => ServeBundle(
+            ctx, "text/css; charset=utf-8",
+            string.Join("\n", UiAssets.Where(f => f.StartsWith("css/")).Select(LoadResource))));
 
         // ---- 自定义背景 ----
         // 背景图存 memory/webui/background.*（上传时统一转存为 background.jpg/png）
@@ -278,6 +299,7 @@ static class WebUi
                 {
                     ok = r.Ok,
                     name = r.Name,
+                    installed = r.Installed,   // 一个 zip 可能装了多个插件
                     fileCount = r.FileCount,
                     loaded = r.Loaded,
                     warnings = r.Warnings,
@@ -294,6 +316,8 @@ static class WebUi
 
         app.MapPost("/api/plugins/{name}/{action}", async (string name, string action) =>
         {
+            // 插件名必须是单一目录名：挡掉 ..\ 之类的路径穿越（PluginManager 内部还有一层同样的校验）
+            if (!PluginManager.IsSafePluginName(name)) return Results.Json(new { ok = false, error = "插件名非法" });
             var ok = action switch
             {
                 "load" => await plugins.LoadAsync(name),
@@ -308,6 +332,7 @@ static class WebUi
 
         app.MapGet("/api/plugins/{name}/settings", (string name) =>
         {
+            if (!PluginManager.IsSafePluginName(name)) return Results.Json(new { ok = false, error = "插件名非法" });
             var defs = plugins.GetSettingDefs(name);
             return Results.Json(new
             {
@@ -319,6 +344,7 @@ static class WebUi
 
         app.MapPost("/api/plugins/{name}/settings", async (string name, Dictionary<string, object?>? body) =>
         {
+            if (!PluginManager.IsSafePluginName(name)) return Results.Json(new { ok = false, error = "插件名非法" });
             var (ok, error) = await plugins.UpdateSettingsAsync(name, body);
             return Results.Json(new { ok, error });
         });
@@ -671,13 +697,111 @@ static class WebUi
         return port;
     }
 
-    private static string LoadIndex() => LoadResource("index.html");
+    // ===================== 静态资源（磁盘 + 热更） =====================
 
+    /// <summary>进程真实 stdout：绕过 Console.SetOut 的日志接管（用于不该进日志的内容，如随机密码）。
+    /// 只打开一次、永不 Dispose（Dispose 可能关掉底层句柄）。</summary>
+    private static readonly Stream RawStdout = Console.OpenStandardOutput();
+
+    /// <summary>只写到真实控制台（无控制台/被重定向时写进重定向目标），不写日志文件与 WebUI 日志环形缓冲</summary>
+    private static void WriteConsoleOnly(string text)
+    {
+        try
+        {
+            var bytes = Encoding.UTF8.GetBytes(text);
+            RawStdout.Write(bytes, 0, bytes.Length);
+            RawStdout.Flush();
+        }
+        catch { /* 没有控制台时忽略 */ }
+    }
+
+    /// <summary>随机密码：字母表已去掉易混字符（0/O/1/l/I），加密强随机</summary>
+    private static string GeneratePassword(int len)
+    {
+        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+        var buf = new char[len];
+        for (var i = 0; i < len; i++) buf[i] = alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)];
+        return new string(buf);
+    }
+
+    /// <summary>WebUI 静态资源目录：&lt;exe旁&gt;/WebUi/（构建与发布时由 csproj 的 Content 项拷贝过来）</summary>
+    private static string WebUiDir => Path.Combine(AppContext.BaseDirectory, "WebUi");
+
+    private static string AssetPath(string name) =>
+        Path.Combine(WebUiDir, name.Replace('/', Path.DirectorySeparatorChar));
+
+    /// <summary>每次调用都读盘：改了 CSS/JS 只要刷新浏览器就生效（无需重建宿主、无需重启）</summary>
     private static string LoadResource(string name)
     {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(name)
-            ?? throw new InvalidOperationException($"内嵌资源 {name} 不存在");
-        using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
+        var path = AssetPath(name);
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"WebUI 资源缺失: {path}（发布包需要带上 WebUi/ 目录）");
+        return File.ReadAllText(path);
+    }
+
+    private static string LoadIndex() => LoadResource("index.html");
+
+    /// <summary>资源版本指纹：随各文件大小/修改时间变化 —— 改了文件版本号自动变，不用手改 index.html</summary>
+    private static string PageVersion()
+    {
+        var sb = new StringBuilder();
+        foreach (var f in UiAssets)
+        {
+            var fi = new FileInfo(AssetPath(f));
+            sb.Append(f).Append('|').Append(fi.Exists ? fi.Length : -1).Append('|')
+              .Append(fi.Exists ? fi.LastWriteTimeUtc.Ticks : 0).Append('\n');
+        }
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())))[..8].ToLowerInvariant();
+    }
+
+    /// <summary>首页 HTML：把 index.html 里的 app.css?v=… / app.js?v=… 换成当前版本指纹</summary>
+    private static string RenderIndex() => RenderHtml("index.html");
+
+    /// <summary>HTML 页面统一处理：注入资源版本指纹（index.html 与 login.html 都要，
+    /// 否则页面里的 ?v= 是写死的旧值，一旦被浏览器缓存成坏内容就再也刷不掉），并禁用 HTML 自身缓存</summary>
+    private static IResult RenderHtmlResult(HttpContext ctx, string name)
+    {
+        ctx.Response.Headers.CacheControl = "no-cache";
+        return Results.Text(RenderHtml(name), "text/html; charset=utf-8");
+    }
+
+    private static string RenderHtml(string name) =>
+        // 必须写成 ${1}：若写成 "$1"+ver，当 ver 以数字开头时 "$14..." 会被当作"第 14 个捕获组"
+        // （不存在则原样输出），整个替换结果会变成 /$14ba40431 这种坏 URL
+        Regex.Replace(LoadResource(name), @"(app\.(?:css|js)\?v=)[^""']*", "${1}" + PageVersion());
+
+    /// <summary>带 ETag 的合并资源响应：内容没变回 304（省流量），变了立刻给新内容</summary>
+    private static IResult ServeBundle(HttpContext ctx, string contentType, string body)
+    {
+        var ver = PageVersion();
+        ctx.Response.Headers.ETag = '"' + ver + '"';
+        ctx.Response.Headers.CacheControl = "no-cache";   // 每次带 ETag 来校验，不做强缓存
+        // 比对时同时容忍 "ver" 与 ver 两种写法（规范要求带引号，但客户端实现并不齐）
+        var inm = ctx.Request.Headers.IfNoneMatch.ToString().Trim().Trim('"');
+        if (inm.Length > 0 && inm == ver)
+            return Results.StatusCode(StatusCodes.Status304NotModified);
+        return Results.Text(body, contentType);
+    }
+
+    /// <summary>启动自检：清单与磁盘对不上就明确报出来（新加文件忘了登记不会静默失效）</summary>
+    private static void CheckAssets()
+    {
+        try
+        {
+            var missing = UiAssets.Where(a => !File.Exists(AssetPath(a))).ToList();
+            var extra = Directory.Exists(WebUiDir)
+                ? Directory.GetFiles(WebUiDir, "*", SearchOption.AllDirectories)
+                    .Select(p => Path.GetRelativePath(WebUiDir, p).Replace('\\', '/'))
+                    .Where(rel => (rel.EndsWith(".js") || rel.EndsWith(".css"))
+                                  && !UiAssets.Contains(rel, StringComparer.OrdinalIgnoreCase))
+                    .ToList()
+                : [];
+            if (missing.Count > 0)
+                Console.WriteLine($"[webui] 警告：清单里的资源在磁盘上不存在 → {string.Join(", ", missing)}");
+            if (extra.Count > 0)
+                Console.WriteLine($"[webui] 警告：磁盘上有未登记的资源（不会被 /app.js|/app.css 打包）→ {string.Join(", ", extra)}");
+            Console.WriteLine($"[webui] 静态资源目录 {WebUiDir}（版本 {PageVersion()}）");
+        }
+        catch (Exception ex) { Console.WriteLine($"[webui] 资源自检失败: {ex.Message}"); }
     }
 }

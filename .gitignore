@@ -497,3 +497,6 @@ memory
 
 # 可直接安装的样例包：由 samples/<名>/ 重新打包即可，不入库
 samples/*.zip
+
+# 发布脚本需要入库（*.sh 默认忽略）
+!release.sh
