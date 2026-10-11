@@ -71,6 +71,19 @@ sealed class IdMap(string path)
         }
     }
 
+    /// <summary>反查合成 id：传合成 id 或已绑定的 QQ 号都能拿到</summary>
+    public bool TrySyntheticOf(long idOrQq, out long synthetic)
+    {
+        lock (_gate)
+        {
+            if (_back.ContainsKey(idOrQq)) { synthetic = idOrQq; return true; }
+            foreach (var (sid, bound) in _bound)
+                if (bound == idOrQq) { synthetic = sid; return true; }
+        }
+        synthetic = 0;
+        return false;
+    }
+
     /// <summary>合成 id → openid（发消息时反查）；也接受直接传真实 QQ 号（绑定过的话）</summary>
     public bool TryOpenId(long id, out string openId)
     {

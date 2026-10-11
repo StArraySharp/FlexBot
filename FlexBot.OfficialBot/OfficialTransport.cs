@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text.Json;
 using FlexBot.PluginApi;
 using OneBotLib;
@@ -34,10 +35,13 @@ public sealed class OfficialTransportOptions
 ///   未支持：成员列表、历史消息、合并转发、群名片/头衔、禁言、poke、文件、好友列表、@ 与图片段渲染
 /// 身份：官方只给 openid，统一经 IdMap 映射成合成 long；绑定真实 QQ 号后 OwnerUin 那套权限/统计照常工作。
 /// </summary>
-public sealed class OfficialTransport : IBotTransport
+public sealed class OfficialTransport : IBotTransport, IIdentityBinder
 {
     private readonly OfficialTransportOptions _opt;
     private readonly IdMap _ids;
+    /// <summary>身份绑定口令：启动时随机生成，只打印在真实控制台（不进日志/不进 WebUI 日志缓冲）</summary>
+    private readonly string _bindCode = NewBindCode();
+    private static readonly Stream RawStdout = Console.OpenStandardOutput();
     private readonly ConcurrentDictionary<long, ISocketMessageChannel> _channels = new();   // 合成 id → 会话通道
     private readonly ConcurrentDictionary<long, IUserMessage> _lastInbound = new();         // 合成 id → 最近入站消息（被动回复源）
     private readonly ConcurrentDictionary<string, long> _msgIdFwd = new();                  // 官方 msg_id → 合成 long
@@ -99,6 +103,47 @@ public sealed class OfficialTransport : IBotTransport
         try { SelfId = _ids.ToLong("u:" + (c.Rest?.CurrentUser?.Id.ToString() ?? "bot")); }
         catch { SelfId = _ids.ToLong("u:bot"); }
         RaiseState(OneBotConnectionState.Connected, $"官方通道已连接（{( _opt.Sandbox ? "沙箱" : "正式")}环境），本体 id={SelfId}");
+        WriteConsoleOnly($"\n[official] 身份绑定口令：{_bindCode}\n"
+                       + "           在 QQ 里给机器人发：!bind qq <你的QQ号> <上面的口令>\n"
+                       + "           绑定后该身份的权限/统计按 QQ 号生效；口令只在控制台打印这一次、每次启动都会变\n\n");
+        Log("已生成身份绑定口令（明文仅控制台可见），等待绑定：!bind qq <QQ号> <口令>");
+    }
+
+    // ===================== 身份绑定（主人在官方通道下没有身份，必须先绑） =====================
+
+    public bool BindingRequired => true;
+
+    public string? TryBind(long idOrQq, long qq, string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code) || code.Trim() != _bindCode)
+            return "口令不正确（口令在宿主控制台窗口里，只打印一次）";
+        if (qq < 10000) return "QQ 号看起来不合法";
+        if (!_ids.TrySyntheticOf(idOrQq, out var synthetic))
+            return "找不到该身份（发送者身份还没记录，先随便发条消息）";
+        _ids.Bind(synthetic, qq);
+        Log($"身份已绑定：{synthetic} → QQ {qq}");
+        return null;
+    }
+
+    /// <summary>随机口令：去掉易混字符（0/O/1/l/I），加密强随机</summary>
+    private static string NewBindCode()
+    {
+        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+        var buf = new char[8];
+        for (var i = 0; i < buf.Length; i++) buf[i] = alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)];
+        return new string(buf);
+    }
+
+    /// <summary>只写到真实控制台，绕过宿主 Console.SetOut 的日志接管（口令不该进日志）</summary>
+    private static void WriteConsoleOnly(string text)
+    {
+        try
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            RawStdout.Write(bytes, 0, bytes.Length);
+            RawStdout.Flush();
+        }
+        catch { }
     }
 
     public async Task DisconnectAsync()

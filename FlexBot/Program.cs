@@ -92,6 +92,11 @@ client.OnGroupMessage += (s, e) => _ = HandleGroupAsync(e);
 // 群消息：先做宿主命令分发（带前缀的命令对所有人开放，安全命令内部鉴权），未命中交给插件
 async Task HandleGroupAsync(GroupMessageEventArgs e)
 {
+    // 官方通道的身份绑定要在权限门禁之前处理（此时主人还没有身份），用控制台一次性口令保护
+    if (await TryHandleBindAsync(e.Message,
+            r => client.SendGroupMsgAsync(e.Message.GroupId ?? 0, Msg.Quote(e.Message.MessageId, r))))
+        return;
+
     // 带前缀才进命令分发（未带前缀直接给插件，AI 才有机会看到普通聊天）
     var prefix = CurrentPrefix();
     if (!string.IsNullOrEmpty(prefix) && e.Message.PlainText.TrimStart().StartsWith(prefix, StringComparison.Ordinal))
@@ -160,6 +165,7 @@ string BuildHelpText(string prefix)
     sb.AppendLine($"可用命令（前缀 {prefix}）：");
     sb.AppendLine($"{prefix}help - 显示本帮助");
     sb.AppendLine($"{prefix}plugin [list|load|unload|reload] - 插件管理");
+        sb.AppendLine($"{prefix}bind qq <QQ号> <口令> - 官方通道：把当前身份绑定到 QQ 号（口令在宿主控制台）");
     foreach (var c in plugins.GetCommands())
     {
         var usage = string.IsNullOrEmpty(c.Usage) ? c.Name : c.Usage;
@@ -168,10 +174,42 @@ string BuildHelpText(string prefix)
     return sb.ToString().TrimEnd();
 }
 
+// 官方通道身份绑定：!bind qq <QQ号> <口令>。必须放在非管理员拦截之前 ——
+// 官方通道只给 openid，主人绑之前身份对不上 OwnerUin，会被下面那道门禁直接拦掉。
+// 绑定等同提权，故必须带控制台一次性口令。
+async Task<bool> TryHandleBindAsync(OneBotLib.Models.MessageObject m, Func<string, Task> reply)
+{
+    if (client is not IIdentityBinder binder || !binder.BindingRequired) return false;
+    if (m.UserId is not { } uid) return false;
+
+    var prefix = CurrentPrefix();
+    var raw = (m.PlainText ?? "").Trim();
+    if (prefix.Length == 0 || !raw.StartsWith(prefix, StringComparison.Ordinal)) return false;
+    var parts = raw[prefix.Length..].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    if (parts.Length == 0 || !parts[0].Equals("bind", StringComparison.OrdinalIgnoreCase)) return false;
+
+    if (parts.Length < 4 || !parts[1].Equals("qq", StringComparison.OrdinalIgnoreCase) || !long.TryParse(parts[2], out var qq))
+    {
+        await reply($"用法：{prefix}bind qq <你的QQ号> <宿主控制台里的口令>");
+        return true;
+    }
+
+    var err = binder.TryBind(uid, qq, parts[3]);
+    Console.WriteLine(err is null ? $"[bind] 身份 {uid} → QQ {qq} 绑定成功" : $"[bind] 绑定失败: {err}");
+    await reply(err is null
+        ? $"已绑定：当前会话身份 → QQ {qq}。管理员/主人权限与统计即刻按该号生效。"
+        : $"绑定失败：{err}");
+    return true;
+}
+
 async Task HandlePrivateAsync(PrivateMessageEventArgs e)
 {
     var m = e.Message;
     if (!m.UserId.HasValue) return;
+
+    // 同上：绑定要在非管理员拦截之前
+    if (await TryHandleBindAsync(m, r => client.SendPrivateMsgAsync(m.UserId!.Value, Msg.Quote(m.MessageId, r))))
+        return;
 
     if (!config.AdminUins.Contains(m.UserId.Value))
     {
