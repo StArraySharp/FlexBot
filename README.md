@@ -269,3 +269,13 @@ FlexBot.OneBotLib/       # OneBot 11 协议库
 FlexBot.BuiltInPlugins/  # 内置插件源码
 samples/csx-json/        # csx 脚本插件示例（NuGet 依赖 + 生成审计）
 ```
+
+## 许可
+
+本项目以 **GNU Affero General Public License v3.0（AGPL-3.0）** 授权，完整条款见仓库根目录的 [`LICENSE`](LICENSE)。
+
+选择 AGPL 的原因很直接：本项目是**网络服务型**软件——只分发二进制时 GPL 对"自己跑起来对外提供服务"的人没有约束力，只有 AGPL 才能要求"修改后对外提供服务的人同样开源"。
+
+这意味着你可以自由使用、修改、自建部署；但如果你**修改后把它作为对外服务提供**，需要按 AGPL 公开你的修改。第三方插件通过公开接口调用本项目，实践上通常不被视为衍生作品（具体取决于法律解释）。
+
+发布包（`FlexBot-<版本>-<rid>.zip`）内同时附带 `LICENSE` 与 `使用说明.txt`。

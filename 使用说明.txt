@@ -27,3 +27,4 @@ FlexBot 使用说明
   · 运行期数据都在宿主目录下的 memory/（含插件配置、记忆、身份绑定表）与 logs/
   · 升级时保留 memory/ 与 logs/ 两个目录即可，其余文件覆盖即可
   · 内置插件包与宿主是两条发布线，包名里都带版本号，别混用太老/太新的组合
+  · 许可协议：GNU Affero General Public License v3.0（AGPL-3.0），完整条款见随包的 LICENSE 文件
