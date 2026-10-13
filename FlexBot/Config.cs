@@ -175,6 +175,11 @@ class HostSettings
             s = new HostSettings();
         }
         s.FilePath = path;
+        // 机密字段：文件里可能是密文（enc:v1:…），这里统一解成明文供运行时使用。
+        // 紧随其后的 Save() 会把明文重新加密写回 ⇒ 旧的明文配置首次启动即自动加密。
+        s.Token = SecretBox.Decrypt(s.Token);
+        s.OfficialAppSecret = SecretBox.Decrypt(s.OfficialAppSecret);
+        foreach (var f in s.FallbackModels) f.ApiKey = SecretBox.Decrypt(f.ApiKey);
         s.NormalizeAccessSettings();
         // 同时移除旧版写入 config.json 的 PluginSettings 字段。
         s.Save();
@@ -190,7 +195,13 @@ class HostSettings
     {
         try
         {
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, BotJson.Indented));
+            // 写盘前复制一份并把机密字段加密：内存里的明文不动（通道/插件继续用明文）
+            var snapshot = JsonSerializer.Deserialize<HostSettings>(JsonSerializer.Serialize(this)) ?? new HostSettings();
+            snapshot.Token = SecretBox.Encrypt(Token);
+            snapshot.OfficialAppSecret = SecretBox.Encrypt(OfficialAppSecret);
+            for (var i = 0; i < snapshot.FallbackModels.Count && i < FallbackModels.Count; i++)
+                snapshot.FallbackModels[i].ApiKey = SecretBox.Encrypt(FallbackModels[i].ApiKey);
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(snapshot, BotJson.Indented));
         }
         catch (Exception ex)
         {

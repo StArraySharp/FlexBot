@@ -15,6 +15,10 @@ try { Console.OutputEncoding = Encoding.UTF8; } catch { }
 var _origOut = Console.Out;
 Console.SetOut(new TimestampWriter(_origOut));
 
+// 配置机密加密：密钥在 exe 旁（.secret.key），必须在读 config.json 之前载入。
+// 路径固定放在 exe 旁而非 memory/，避免 MemoryDir 改了以后旧密文再也解不开。
+SecretBox.Init(Path.Combine(AppContext.BaseDirectory, ".secret.key"));
+
 var settings = HostSettings.Load();
 var config = new HostConfig(settings);
 // 通道选择：默认 onebot（LLBot/NapCat）；配 Transport=official 走 QQ 官方机器人开放平台。

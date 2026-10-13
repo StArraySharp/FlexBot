@@ -760,7 +760,7 @@ sealed class PluginManager
             }
             existing.Clear();
             foreach (var item in clean) existing[item.Key] = item.Value;
-            SavePluginSettings(name, existing);
+            SavePluginSettings(name, existing, defs);
 
             // 这些键在插件构造时读取，变更必须热重载才生效
             var reloadKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -826,7 +826,7 @@ sealed class PluginManager
             {
                 var json = File.ReadAllText(path);
                 var values = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
-                return _pluginSettings[name] = values ?? new(StringComparer.OrdinalIgnoreCase);
+                return _pluginSettings[name] = DecryptSettings(values ?? new(StringComparer.OrdinalIgnoreCase));
             }
 
             // 将旧 config.json 中的嵌套 PluginSettings 自动迁移一次。
@@ -846,14 +846,41 @@ sealed class PluginManager
         return _pluginSettings[name] = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    private void SavePluginSettings(string name, Dictionary<string, JsonElement> values)
+    private void SavePluginSettings(string name, Dictionary<string, JsonElement> values, IReadOnlyList<PluginSettingDef>? defs = null)
     {
         var path = PluginSettingsPath(name);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + ".tmp";
+        // 落盘才加密（内存与插件始终拿明文）：只处理 defs 声明为 password 的键，且已是密文的不再套一层
+        var disk = values;
+        if (defs is { Count: > 0 })
+        {
+            var secretKeys = defs.Where(d => string.Equals(d.Type, "password", StringComparison.OrdinalIgnoreCase))
+                                 .Select(d => d.Key).ToList();
+            if (secretKeys.Count > 0)
+            {
+                disk = new Dictionary<string, JsonElement>(values, StringComparer.OrdinalIgnoreCase);
+                foreach (var k in secretKeys)
+                    if (disk.TryGetValue(k, out var v) && v.ValueKind == JsonValueKind.String)
+                        disk[k] = JsonSerializer.SerializeToElement(SecretBox.Encrypt(v.GetString()));
+            }
+        }
         // 中文/特殊字符原样存储，不转 \uXXXX，便于人工编辑与 git diff
-        File.WriteAllText(temp, JsonSerializer.Serialize(values, BotJson.Indented));
+        File.WriteAllText(temp, JsonSerializer.Serialize(disk, BotJson.Indented));
         File.Move(temp, path, true);
+    }
+
+    /// <summary>读取时把 enc:v1: 字符串解成明文（插件只应看到明文；非密文原样保留）</summary>
+    private static Dictionary<string, JsonElement> DecryptSettings(Dictionary<string, JsonElement> src)
+    {
+        foreach (var key in src.Keys.ToList())
+        {
+            if (src[key].ValueKind != JsonValueKind.String) continue;
+            var s = src[key].GetString();
+            if (SecretBox.IsEncrypted(s))
+                src[key] = JsonSerializer.SerializeToElement(SecretBox.Decrypt(s));
+        }
+        return src;
     }
 
     // 旧全局配置（模型/人格/前缀/Chat 设置）→ 插件设置 的一次性迁移（仅写缺失键，不覆盖用户已改值）
