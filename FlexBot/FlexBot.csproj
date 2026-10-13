@@ -42,4 +42,46 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <!--
+    Photino 的原生层通过 LoadLibrary("WebView2Loader.dll") 取 WebView2 加载器：
+    该调用走 Windows 默认搜索路径（应用目录 + 系统目录 + PATH），**不会**去 runtimes/<rid>/native/ 找。
+    带 RID 的自包含发布（release.sh 那套）本来就把原生库放在 exe 旁边，所以正常；
+    而无 RID 的普通构建（dotnet build / dotnet run / 直接在 bin 下跑）只把原生库放在 runtimes 子目录里，
+    于是出现"窗口能打开、画面纯黑、WebView2 环境创建失败、连一个页面请求都没有"。
+    这里构建后把它们复制到 exe 旁，让开发运行与发布包行为一致。
+  -->
+  <PropertyGroup>
+    <_PhotinoWinRid Condition="'$(PlatformTarget)' == 'arm64'">win-arm64</_PhotinoWinRid>
+    <_PhotinoWinRid Condition="'$(_PhotinoWinRid)' == ''">win-x64</_PhotinoWinRid>
+  </PropertyGroup>
+
+  <Target Name="CopyPhotinoNatives" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <ItemGroup>
+      <PhotinoNativeDll Include="$(OutDir)runtimes\$(_PhotinoWinRid)\native\*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PhotinoNativeDll)" DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" ContinueOnError="true" />
+  </Target>
+
+  <!--
+    Photino 的原生层通过 LoadLibrary("WebView2Loader.dll") 取 WebView2 加载器：
+    该调用走 Windows 默认搜索路径（应用目录 + 系统目录 + PATH），**不会**去 runtimes/<rid>/native/ 找。
+    带 RID 的自包含发布（release.sh 那套）本来就把原生库放在 exe 旁边，所以正常；
+    而无 RID 的普通构建（dotnet build / dotnet run / 直接在 bin 下跑）只把原生库放在 runtimes 子目录里，
+    于是出现"窗口能打开、画面纯黑、WebView2 环境创建失败、连一个页面请求都没有"。
+    这里构建后把它们复制到 exe 旁，让开发运行与发布包行为一致。
+  -->
+  <PropertyGroup>
+    <_PhotinoWinRid Condition="'$(PlatformTarget)' == 'arm64'">win-arm64</_PhotinoWinRid>
+    <_PhotinoWinRid Condition="'$(_PhotinoWinRid)' == ''">win-x64</_PhotinoWinRid>
+  </PropertyGroup>
+
+  <Target Name="CopyPhotinoNatives" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <ItemGroup>
+      <PhotinoNativeDll Include="$(OutDir)runtimes\$(_PhotinoWinRid)\native\*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PhotinoNativeDll)" DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" ContinueOnError="true" />
+  </Target>
+
 </Project>

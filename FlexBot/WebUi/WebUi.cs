@@ -42,6 +42,9 @@ static class WebUi
     private static readonly string SessionToken = Convert.ToHexString(Guid.NewGuid().ToByteArray())
         .ToLowerInvariant();
 
+    /// <summary>是否曾有页面（/ 或 /login）被请求过：窗口模式用来判断 WebView 是否真的导航成功</summary>
+    public static volatile bool HasServedPage;
+
     public static string Start(PluginManager plugins, HostSettings settings, IBotTransport client, ProcessManager procs, Action? requestShutdown = null)
     {
         var port = GetPort(settings.WebUiPort);
@@ -99,6 +102,13 @@ static class WebUi
             // 白名单：登录页、认证接口、静态资源（css/js 是纯样式与脚本，无敏感数据；登录页需要它们渲染）
             // /api/theme-cfg + /background：外观设置（背景图/透明度）对所有访问者（含登录页）生效，无敏感数据
             var pStr = path.Value ?? "";
+            // 页面请求留痕：黑屏/白屏这类问题要能分辨"页面根本没被请求"还是"请求到了但渲染不出来"
+            if (pStr is "/" or "/login")
+            {
+                HasServedPage = true;
+                Console.WriteLine($"[webui] {ctx.Request.Method} {pStr} ← {ctx.Connection.RemoteIpAddress} ua={(ctx.Request.Headers.UserAgent.ToString() is { Length: > 0 } ua ? ua[..Math.Min(60, ua.Length)] : "-")}");
+            }
+
             if (pStr == "/login" || pStr == "/app.css" || pStr == "/app.js"
                 || pStr.StartsWith("/css/") || pStr.StartsWith("/js/")
                 || pStr.StartsWith("/api/auth")

@@ -47,7 +47,8 @@ dotnet run --project FlexBot
 |---|---|
 | （无） | 有可用图形界面就打开 Photino 桌面窗口（内容即 WebUI 页面），关窗即退出；Windows 服务/Session 0、Linux 无 `DISPLAY`/`WAYLAND_DISPLAY` 时自动退化 |
 | `--no-gui` / `--headless` | 强制无窗口：控制台常驻 + 浏览器访问 WebUI |
-| `--gui` | 强制尝试开窗口；创建失败（缺 WebView 运行时等）仍回退无窗口，不杀进程 |
+| `--browser` | 用系统 Chrome/Edge 以 `--app=` 应用窗口打开 WebUI（无地址栏） |
+| `--gui` | 强制重试原生 Photino 窗口；创建失败仍回退无窗口，不杀进程 |
 | `--no-web` | 不开 WebUI（纯机器人） |
 
 探测逻辑（`FlexBot/WebUi/GuiSupport.cs`）保守判断：Windows 用 `Environment.UserInteractive`，macOS 默认可用，Linux 看 `DISPLAY`/`WAYLAND_DISPLAY`；不确定时按"没有"处理。
