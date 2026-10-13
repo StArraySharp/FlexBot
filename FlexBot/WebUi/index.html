@@ -85,16 +85,6 @@
 
       <!-- 配置 -->
       <section class="page" id="page-config">
-        <div class="card">
-          <h3>宿主进程</h3>
-          <div class="desc">优雅停止：卸载全部插件（各自收尾、KV 落盘）→ 断开通道 → 停掉随宿主拉起的 NapCat/LLBot。停止后需要手动重新启动宿主</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-            <button class="btn err-tonal" id="cfgShutdown" type="button">
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 3h2v9h-2zM6.4 5.5l1.4 1.4A7 7 0 1 0 19 12a7 7 0 0 0-2.8-5.6l1.4-1.4A9 9 0 1 1 4.4 12a9 9 0 0 1 2-6.5z"/></svg>优雅停止宿主
-            </button>
-            <span class="visionhint" id="cfgShutdownHint" style="margin:0"></span>
-          </div>
-        </div>
         <div id="cfgSaveBar">
           <label class="switch"><input type="checkbox" id="cfgReload"><span class="track"><span class="thumb"></span></span>保存后重载已加载插件</label>
           <button class="btn filled" id="cfgSave">
@@ -124,8 +114,6 @@
             <div style="display:flex;flex-direction:column;gap:14px">
               <div class="tf"><input id="cfgOfficialAppId" placeholder=" "><label>官方机器人 AppID（数字）</label></div>
               <div class="tf"><input id="cfgOfficialSecret" placeholder=" " type="password" autocomplete="off"><label>官方机器人 AppSecret</label></div>
-              <label class="switch"><input type="checkbox" id="cfgOfficialSandbox" checked><span class="track"><span class="thumb"></span></span>沙箱环境（未上架时用）</label>
-              <label class="switch"><input type="checkbox" id="cfgOfficialRegisterCmds"><span class="track"><span class="thumb"></span></span>注册客户端「指令」（平台限 10 条/场景，默认关）</label>
             </div>
           </div>
           <div class="card">

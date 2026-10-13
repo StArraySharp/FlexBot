@@ -19,8 +19,6 @@ async function loadConfig() {
     $('cfgIsolateLogs').checked = c.isolateDependencyLogs !== false;
     $('cfgTransport').value = c.transport || 'onebot';
     $('cfgOfficialAppId').value = c.officialAppId || '';
-    $('cfgOfficialSandbox').checked = c.officialSandbox !== false;
-    $('cfgOfficialRegisterCmds').checked = c.officialRegisterCommands === true;
     $('cfgOfficialSecret').value = '';            // 官方密钥不回显（服务端只告诉是否已设置）
     $('cfgWebUiPort').value = c.webUiPort || '';
     $('cfgWebUiPwd').value = ''; // 密码不回显（服务端只存 SHA256）
@@ -36,16 +34,6 @@ function scheduleCfgMsgClear() {
   cfgMsgTimer = setTimeout(() => { $('cfgMsg').textContent = ''; }, 2000);
 }
 
-// 优雅停止宿主（服务端收到后会先回响应，再卸载插件/断连/清理依赖进程）
-$('cfgShutdown').onclick = async () => {
-  if (!confirm('确定要优雅停止宿主吗？\n\n会依次：卸载全部插件 → 断开机器人通道 → 停掉随宿主拉起的 NapCat/LLBot。\n停止后需要手动重新启动宿主。')) return;
-  const hint = $('cfgShutdownHint');
-  hint.textContent = '正在停止…';
-  try {
-    const r = await (await fetch('/api/shutdown', { method: 'POST' })).json();
-    hint.textContent = r.ok ? '宿主已开始优雅退出，本页面稍后会失联' : ('失败: ' + (r.error || '未知错误'));
-  } catch (e) { hint.textContent = '宿主已退出（连接中断）'; }
-};
 $('cfgSave').onclick = async () => {
   const btn = $('cfgSave'); btn.disabled = true;
   $('cfgMsg').textContent = '保存中…';
@@ -66,8 +54,6 @@ $('cfgSave').onclick = async () => {
       isolateDependencyLogs: $('cfgIsolateLogs').checked,
       transport: v('cfgTransport'),
       officialAppId: v('cfgOfficialAppId'),
-      officialSandbox: $('cfgOfficialSandbox').checked,
-      officialRegisterCommands: $('cfgOfficialRegisterCmds').checked,
       ...($('cfgOfficialSecret').value.length > 0 ? { officialAppSecret: $('cfgOfficialSecret').value } : {}),
       webUiPort: webUiPort,
       ...($('cfgWebUiPwd').value.length > 0 ? { webUiPassword: $('cfgWebUiPwd').value } : {}),
