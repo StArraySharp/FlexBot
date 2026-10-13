@@ -14,12 +14,9 @@ enum RunMode
 /// <summary>
 /// 启动形态的唯一决策与执行点（重写后：**没有自适应魔法、没有标记文件、没有自检等待**）。
 ///
-/// 规则（一句话版本）
-///   默认        → 开应用窗口：用系统 Chrome/Edge 以 --app=URL 打开 WebUI（专属 profile ⇒ 复用同一个窗口），控制台收起
-///   --native    → 改用进程内的 Photino 原生窗口（依赖 WebView2；失败则提示改用默认模式，不做静默兜底）
-///   --no-gui    → 不开窗口，控制台常驻
-///   --console   → 即使开窗口也保留控制台
-///   --no-web    → 连 WebUI 都不开（纯机器人）
+/// 规则（只有一个参数）:
+///   默认      → 开应用窗口：用系统 Chrome/Edge 以 --app=URL 打开 WebUI（专属 profile ⇒ 复用同一个窗口），控制台收起
+///   --no-gui  → 不开窗口：控制台常驻，浏览器手动打开控制台打印的地址
 ///
 /// 为什么默认不用 Photino：本机 WebView2 环境可能创建失败（窗口纯黑、无任何页面请求），
 /// 而系统浏览器一定能渲染。默认走浏览器应用窗口 ⇒ 启动即可见、行为稳定、无需猜测。
@@ -30,13 +27,13 @@ static class AppShell
     public static RunMode ResolveMode(string[] args, bool webUiAvailable)
     {
         if (!webUiAvailable) return RunMode.ConsoleOnly;                 // 没开 WebUI 就没窗口可开
-        if (args.Contains("--no-gui") || args.Contains("--headless")) return RunMode.ConsoleOnly;
+        if (args.Contains("--no-gui")) return RunMode.ConsoleOnly;
         return RunMode.AppWindow;                                        // 默认
     }
 
     /// <summary>是否需要收起控制台（Windows 有效）：开了窗口且没要求保留控制台</summary>
-    public static bool ShouldHideConsole(string[] args, RunMode mode) =>
-        mode == RunMode.AppWindow && !args.Contains("--console");
+    public static bool ShouldHideConsole(RunMode mode) =>
+        mode == RunMode.AppWindow;
 
     /// <summary>
     /// 打开应用窗口。专属 profile 让 Chrome/Edge 复用同一个窗口（反复启动不会堆窗口），

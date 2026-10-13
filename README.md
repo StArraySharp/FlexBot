@@ -67,17 +67,11 @@ read <名>  readsrc <名> <相对路径>  log <名> [行数]  llm <名> [序号]
 
 默认会**打开一个桌面窗口**（它加载的就是 WebUI 页面），**关窗即退出程序**。没有图形界面的环境（服务器、容器、无 `DISPLAY`）会自动退化为无窗口模式，用浏览器访问控制台打印的 WebUI 地址即可；也可以显式指定：
 
-| 参数 | 效果 |
-|---|---|
-| （不带参数） | **开应用窗口**：用系统 Chrome/Edge 以 `--app=` 打开 WebUI（无地址栏，专属 profile ⇒ 反复启动复用同一个窗口），控制台自动收起 |
-| `--native`（旧名 `--gui`） | 改用进程内 Photino 原生窗口（依赖 WebView2；本机 WebView2 异常时会明确提示，不做静默兜底） |
-| `--no-gui` / `--headless` | 不开窗口，控制台常驻（服务器/后台跑用这个） |
-| `--console` | 即使开窗口也保留控制台窗口 |
-| `--no-web` | 连 WebUI 都不开（纯机器人） |
-| `--allow-multiple` | 故意多开（**同一目录默认只允许一个宿主**：两个宿主同连一个 OneBot 实现会重复回复） |
+参数只有一个：**`--no-gui`**（不开窗口，控制台常驻；浏览器手动打开控制台打印的 WebUI 地址）。
 
-没有图形界面（无 `DISPLAY`、Windows 服务/会话 0）时自动退化为纯控制台模式，浏览器手动打开控制台打印的地址即可。
-第二次启动会被拒绝并提示已在运行实例的 WebUI 地址。
+不带参数时：**开应用窗口** —— 用系统 Chrome/Edge 以 `--app=` 打开 WebUI（无地址栏；专属 profile ⇒ 反复启动复用同一个窗口），
+控制台自动收起（看日志用 WebUI 日志页）。没有图形界面（无 `DISPLAY`、Windows 服务/会话 0）时自动退化为 `--no-gui` 的行为。
+**同一目录只允许一个宿主**：第二个实例会被拒绝，并打印已在运行实例的 WebUI 地址。
 ### 3. 首次配置
 
 1. 控制台会打印 **WebUI 地址**，以及一个**随机登录密码**（明文只打印这一次，不写日志）
@@ -177,7 +171,6 @@ dotnet run --project FlexBot
 
 | 库 | 用途 | 许可证 | 链接 |
 |---|---|---|---|
-| Photino.NET 4.0.16 | 桌面窗口（宿主可选用 Photino 界面） | Apache-2.0 | [GitHub](https://github.com/tryphotino/photino.NET) · [NuGet](https://www.nuget.org/packages/Photino.NET) |
 | Microsoft.CodeAnalysis.CSharp 5.9.0 | csx 脚本插件的内存编译（Roslyn） | MIT | [GitHub](https://github.com/dotnet/roslyn) · [NuGet](https://www.nuget.org/packages/Microsoft.CodeAnalysis.CSharp) |
 | QQBot.Net 0.2.0 | QQ 官方机器人开放平台通道（token / 网关 / 指令 / 互动） | MIT | [GitHub](https://github.com/gehongyan/QQBot.Net) · [文档](https://qqbotnet.dev/) |
 | Microsoft Agent Framework（Microsoft.Agents.AI / .OpenAI）1.17.0 | Agent 插件的模型调用与工具循环 | MIT | [GitHub](https://github.com/microsoft/agent-framework) · [NuGet](https://www.nuget.org/packages/Microsoft.Agents.AI) |
