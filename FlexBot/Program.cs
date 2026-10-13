@@ -28,11 +28,15 @@ internal static class Program
         // WinExe 子系统下进程默认没有控制台：--no-gui 时先按需开通，后面的日志才看得到
         if (args.Contains("--no-gui")) FlexBot.WebUi.ConsoleWindow.EnsureConsole();
         try { Console.OutputEncoding = Encoding.UTF8; } catch { }
-        // 控制台打开 VT 解析：否则子进程（LLBot/NapCat）的彩色日志会显示成 [0m、[32m 这类字面量
-        if (FlexBot.WebUi.AnsiConsole.EnableVirtualTerminal())
-            Console.WriteLine("[boot] 控制台已启用 ANSI 颜色解析");
+
         var _origOut = Console.Out;
         Console.SetOut(new TimestampWriter(_origOut));
+
+        // 控制台打开 VT 解析：否则子进程（LLBot/NapCat）的彩色日志会显示成 [0m、[32m 这类字面量。
+        // 放在 Console.SetOut 之后，这一行才会同时进环形缓冲与日志文件（便于事后确认有没有生效）。
+        Console.WriteLine(FlexBot.WebUi.AnsiConsole.EnableVirtualTerminal()
+            ? "[boot] 控制台已启用 ANSI 颜色解析（子进程彩色日志正常显示）"
+            : "[boot] 控制台未启用 ANSI 解析（无可用的控制台句柄；日志文件与 WebUI 不受影响）");
 
         // 单实例：同一份程序（按 exe 目录区分）只允许一个宿主。
         // 两个宿主同连一个 OneBot 实现会重复回复、抢日志与端口，所以默认拒绝。
