@@ -389,7 +389,7 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) => RequestShutdown("ProcessExit");
 // Bot 核心（后台运行：连接 NapCat + 加载插件 + 保活）
 var coreTask = Task.Run(RunBotAsync);
 
-// WebUI（默认开启，浏览器可直接访问；--no-web 关闭）
+// WebUI（默认开启；--no-web 关闭）：窗口模式与浏览器模式都用它，页面是同一份
 string? uiUrl = null;
 if (!args.Contains("--no-web"))
 {
@@ -397,10 +397,26 @@ if (!args.Contains("--no-web"))
     Console.WriteLine($"[webui] 控制台已就绪: {uiUrl}");
 }
 
-// Photino 桌面窗口（--gui）：同一页面以本地窗口展示，关窗即退出
-if (args.Contains("--gui") && uiUrl is not null)
+// ===================== 运行模式：默认开窗口，没有图形界面就用 WebUI =====================
+// 规则（跨平台）：
+//   默认      → 有可用图形界面就开 Photino 窗口（页面仍是 WebUI），关窗即退出
+//   --no-gui  → 强制无窗口：控制台常驻 + 浏览器访问 WebUI（服务器/后台跑就用这个）
+//   --gui     → 强制尝试窗口；创建失败仍回退无窗口（不杀进程）
+//   --no-web  → 连 WebUI 都不开（纯机器人，无管理页面）
+var forceGui = args.Contains("--gui");
+var noGui = args.Contains("--no-gui") || args.Contains("--headless");
+var guiWanted = uiUrl is not null && (forceGui || !noGui);
+var guiUsable = guiWanted && FlexBot.WebUi.GuiSupport.Available;
+if (guiWanted && !guiUsable && !forceGui)
+    Console.WriteLine($"[boot] 未检测到可用图形界面（{FlexBot.WebUi.GuiSupport.Describe()}）：以无窗口模式运行，浏览器打开上面的 WebUI 地址");
+else if (noGui && !forceGui && uiUrl is not null)
+    Console.WriteLine("[boot] 已指定 --no-gui：无窗口模式（浏览器打开上面的 WebUI 地址）");
+
+if (guiUsable && uiUrl is not null)
 {
-    PhotinoGui.Run(uiUrl); // 阻塞至窗口关闭
+    // 返回 false = 窗口没起来：继续无窗口运行，不影响机器人
+    if (!FlexBot.WebUi.PhotinoGui.Run(uiUrl, () => RequestShutdown("窗口关闭")))
+        await coreTask;
 }
 else
 {
@@ -459,7 +475,7 @@ async Task RunBotAsync()
     if (login.Success && login.Data is not null) BotState.SelfId = login.Data.UserId;
 
     Console.WriteLine($"[+] Ready: admins={string.Join(',', settings.AllAdminUins)}，已启用插件 {plugins.BuildList().Replace("\n", " | ")}");
-    Console.WriteLine("[+] 私聊仅管理员可用；群里 @ 我/叫科比提问；管理员可用 !api / !timer / !cron / !watch / !plugin 等命令。按 Ctrl+C 或关闭窗口退出。");
+    Console.WriteLine("[+] 私聊仅管理员可用；群里 @ 我/叫科比提问；管理员可用 !api / !timer / !cron / !watch / !plugin 等命令。");
 
     // 保活：stdin 关闭/被重定向(EOF)时 Console.ReadLine() 立即返回 null，若直接退出会导致后台任务被中断
     while (Console.ReadLine() is not null) { }

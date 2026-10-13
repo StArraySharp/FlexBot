@@ -41,6 +41,16 @@ dotnet run --project FlexBot
 }
 ```
 
+运行模式（默认开窗口，无图形界面自动退化为 WebUI）：
+
+| 参数 | 效果 |
+|---|---|
+| （无） | 有可用图形界面就打开 Photino 桌面窗口（内容即 WebUI 页面），关窗即退出；Windows 服务/Session 0、Linux 无 `DISPLAY`/`WAYLAND_DISPLAY` 时自动退化 |
+| `--no-gui` / `--headless` | 强制无窗口：控制台常驻 + 浏览器访问 WebUI |
+| `--gui` | 强制尝试开窗口；创建失败（缺 WebView 运行时等）仍回退无窗口，不杀进程 |
+| `--no-web` | 不开 WebUI（纯机器人） |
+
+探测逻辑（`FlexBot/WebUi/GuiSupport.cs`）保守判断：Windows 用 `Environment.UserInteractive`，macOS 默认可用，Linux 看 `DISPLAY`/`WAYLAND_DISPLAY`；不确定时按"没有"处理。
 启动后控制台会打印 WebUI 地址（本机地址 `http://127.0.0.1:<端口>`；实际监听 `0.0.0.0`，局域网可达），浏览器打开即可管理。登录失败会按来源 IP 指数退避（前 2 次立即返回，之后 2/4/8… 秒，上限 5 分钟）。
 
 ### 模型配置
