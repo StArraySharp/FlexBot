@@ -1,0 +1,36 @@
+# 构建检查：push / PR 自动编译并跑单元测试（不打包，几秒钟级）
+#
+# 目的只有一个：别让编不过或测试挂掉的代码进主干。
+# 打包发布走另一个 workflow（release.yml，手动触发）。
+name: 构建检查
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: 还原依赖
+        run: dotnet restore FlexBot.slnx
+
+      - name: 构建（Release）
+        run: dotnet build FlexBot.slnx -c Release --no-restore --nologo
+
+      - name: 单元测试
+        run: >
+          dotnet test FlexBot.Tests/FlexBot.Tests.csproj -c Release --no-build --nologo
+          --logger "console;verbosity=normal"

@@ -34,14 +34,16 @@ IBotTransport client = settings.Transport.Equals("official", StringComparison.Or
     })
     : new BotClient();
 Console.WriteLine($"[boot] 机器人通道: {client.TransportName}");
+// 出站记录代理：插件/AI 与宿主自身的发送都进消息流（WebUI 实时消息流用）
+var api = new RecordingBotApi(client);
 var messages = new MessageRouter();
 var events = new EventRouter();
-var plugins = new PluginManager(client, config, messages, events, settings);
+var plugins = new PluginManager(api, config, messages, events, settings);
 BotState.WsUrl = settings.WsUrl;
 
 // ===================== 事件接线（宿主 → 插件路由） =====================
 
-var reconnecting = 0;
+var reconnecting = 0;   // 重连计数（同时进 Stats）
 var everConnected = false;
 client.OnConnectionStateChanged += (s, e) =>
 {
@@ -88,6 +90,7 @@ client.OnConnectionStateChanged += (s, e) =>
         && Interlocked.CompareExchange(ref reconnecting, 1, 0) == 0)
         _ = Task.Run((Func<Task?>)(async () =>
         {
+            Stats.IncReconnect();   // 统计：进入一次断线重连流程
             try
             {
                 while (true)
@@ -149,7 +152,9 @@ client.OnGroupMessage += (s, e) => _ = HandleGroupAsync(e);
 async Task HandleGroupAsync(GroupMessageEventArgs e)
 {
     // 去重放在最前：重连重放/重复投递的同一条消息只处理一次（含绑定的重复请求）
-    if (MessageDedup.IsDuplicate($"{client.TransportName}:g:{e.Message.MessageId}")) return;
+    if (MessageDedup.IsDuplicate($"{client.TransportName}:g:{e.Message.MessageId}")) { Stats.IncDedupDropped(); return; }
+    Stats.IncIn();
+    Stats.Recent.Add("in", "group", e.Message.GroupId ?? 0, e.Message.PlainText);
 
     // 官方通道的身份绑定要在权限门禁之前处理（此时主人还没有身份），用控制台一次性口令保护
     if (await TryHandleBindAsync(e.Message,
@@ -162,7 +167,7 @@ async Task HandleGroupAsync(GroupMessageEventArgs e)
     {
         var isGroupAdmin = e.Message.UserId.HasValue && config.AdminUins.Contains(e.Message.UserId.Value);
         var handled = await TryDispatchCommandAsync(e.Message.PlainText.Trim(), isAdmin: isGroupAdmin,
-            r => client.SendGroupMsgAsync(e.Message.GroupId ?? 0, Msg.Quote(e.Message.MessageId, r)));
+            r => api.SendGroupMsgAsync(e.Message.GroupId ?? 0, Msg.Quote(e.Message.MessageId, r)));
         if (handled) return; // 命中命令：回复已发，不再给插件（AI）
     }
     await messages.DispatchGroupAsync(e);
@@ -263,6 +268,11 @@ async Task<bool> TryHandleBindAsync(OneBotLib.Models.MessageObject m, Func<strin
 
 async Task HandlePrivateAsync(PrivateMessageEventArgs e)
 {
+    // 去重：与群消息同理，重放/重复投递只处理一次
+    if (MessageDedup.IsDuplicate($"{client.TransportName}:p:{e.Message.MessageId}")) { Stats.IncDedupDropped(); return; }
+    Stats.IncIn();
+    Stats.Recent.Add("in", "private", e.Message.UserId ?? 0, e.Message.PlainText);
+
     var m = e.Message;
     if (!m.UserId.HasValue) return;
 

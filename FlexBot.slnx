@@ -13,4 +13,5 @@
     <Project Path="FlexBot.BuiltInPlugins\PluginApi\PluginApi.csproj" />
     <Project Path="FlexBot.BuiltInPlugins\PluginBuilder\PluginBuilder.csproj" />
   </Folder>
+  <Project Path="FlexBot.Tests\FlexBot.Tests.csproj" />
 </Solution>

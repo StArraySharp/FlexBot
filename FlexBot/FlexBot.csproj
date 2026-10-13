@@ -35,4 +35,11 @@
     <Content Include="WebUi\**\*.html;WebUi\**\*.css;WebUi\**\*.js" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 单元测试需要访问宿主内部类型（HostSettings / MessageDedup / PluginManager 等） -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>FlexBot.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

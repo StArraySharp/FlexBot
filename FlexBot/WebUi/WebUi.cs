@@ -103,7 +103,8 @@ static class WebUi
                 || pStr.StartsWith("/css/") || pStr.StartsWith("/js/")
                 || pStr.StartsWith("/api/auth")
                 || pStr == "/api/theme-cfg"
-                || pStr == "/background") { await next(); return; }
+                || pStr == "/background"
+                || pStr == "/healthz") { await next(); return; }   // 探活：部署/监控用，只暴露存活与连接状态
             var ok = false;
             if (ctx.Request.Headers.TryGetValue("Authorization", out var auth) && auth.ToString() == $"Bearer {SessionToken}") ok = true;
             else if (ctx.Request.Cookies.TryGetValue("session_token", out var tok) && tok == SessionToken) ok = true;
@@ -250,6 +251,21 @@ static class WebUi
             startedAt = BotState.StartedAt.ToString("yyyy-MM-dd HH:mm:ss"),
             uptimeSec = (long)(DateTime.Now - BotState.StartedAt).TotalSeconds
         }));
+
+        // 探活（免认证）：只暴露"活着、连没连上、跑多久"，不含任何敏感信息
+        app.MapGet("/healthz", () => Results.Json(new
+        {
+            ok = true,
+            connected = BotState.Connected,
+            transport = client.TransportName,
+            uptimeSec = (long)(DateTime.Now - BotState.StartedAt).TotalSeconds
+        }));
+
+        // 运行统计（认证）：消息/命令/重连/去重/插件异常计数 + 最近消息缓冲条数
+        app.MapGet("/api/stats", () => Results.Json(Stats.Snapshot()));
+
+        // 实时消息流（认证）：增量轮询，协议与 /api/logs 一致（用返回的 next 作为下次 after）
+        app.MapGet("/api/messages", (long after, int? max) => Results.Json(Stats.Recent.GetAfter(after, max ?? 200)));
 
         app.MapGet("/api/logs", (int after) =>
         {

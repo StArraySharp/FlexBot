@@ -160,9 +160,12 @@ class HostSettings
     [System.Text.Json.Serialization.JsonIgnore]
     public PersonaSettings? ActivePersona => Personas.FirstOrDefault(x => x.Enabled);
 
-    public static HostSettings Load()
+    public static HostSettings Load() =>
+        LoadFrom(System.IO.Path.Combine(AppContext.BaseDirectory, "config.json"));
+
+    /// <summary>从指定路径载入（测试与多环境用）；载入后会把规范化结果写回同一路径</summary>
+    public static HostSettings LoadFrom(string path)
     {
-        var path = System.IO.Path.Combine(AppContext.BaseDirectory, "config.json");
         HostSettings s = new();
         try
         {
