@@ -5,7 +5,7 @@ using FlexBot.PluginApi;
 namespace FileSystemPlugin;
 
 /// <summary>
-/// 沙箱文件操作插件：fs_read/fs_write/fs_append/fs_list/fs_delete/fs_mkdir/fs_info/fs_download
+/// 沙箱文件操作插件：fs_read/fs_write/fs_append/fs_list/fs_delete/fs_mkdir/fs_info/fs_move/fs_download/fs_search/fs_replace
 /// 一切操作限制在沙箱根目录内（默认 memory/fs），路径越界一律拒绝。
 /// 命令仅管理员可触发（宿主分发保证 + 工具侧 IsAdmin 双保险）。
 /// </summary>
@@ -22,7 +22,7 @@ public sealed class FileSystemPlugin : IBotPlugin
 
     public string Name => "FileSystem";
     public string Version => "1.0.0";
-    public string Description => "沙箱文件操作：fs_read/fs_write/fs_list/fs_delete/fs_download（供其他插件与 AI 复用）";
+    public string Description => "沙箱文件操作：fs_read/fs_write/fs_append/fs_list/fs_delete/fs_mkdir/fs_info/fs_move/fs_download/fs_search/fs_replace（供其他插件与 AI 复用）";
 
     public IReadOnlyList<PluginSettingDef> SettingDefs =>
     [
@@ -174,8 +174,10 @@ public sealed class FileSystemPlugin : IBotPlugin
         context.RegisterCommand("fs_info", "查看文件/目录信息", a => Run(a, 1, InfoAsync), "fs_info <相对路径>");
         context.RegisterCommand("fs_download", "下载 URL 到沙箱", a => Run(a, 2, DownloadAsync), "fs_download <URL> <相对路径>");
         context.RegisterCommand("fs_move", "移动/重命名", a => Run(a, 2, MoveAsync), "fs_move <原路径> <新路径>");
-        context.RegisterCommand("fs_search", "正则搜索文件内容", a => Run(a, 2, SearchAsync), "fs_search <相对路径|目录> <正则> [前N条]");
-        context.RegisterCommand("fs_replace", "正则替换文件内容", a => Run(a, 3, ReplaceAsync), "fs_replace <相对路径> <正则> <替换串>");
+        context.RegisterCommand("fs_search", "正则搜索文件内容（支持目录/glob/上下文/忽略大小写）", SearchCommandAsync,
+            "fs_search <相对路径|目录> <正则> [--glob *.cs] [--ignore-case] [--limit N] [--context N] [--files-only]");
+        context.RegisterCommand("fs_replace", "正则替换（支持目录；默认只预览，加 --apply 才写入）", ReplaceCommandAsync,
+            "fs_replace <相对路径|目录> <正则> <替换串> [--apply] [--glob *.cs] [--ignore-case] [--backup]");
         return Task.CompletedTask;
     }
 
@@ -377,69 +379,261 @@ public sealed class FileSystemPlugin : IBotPlugin
 
     // ---------------- 搜索 / 替换（供 AI 迭代修改代码用） ----------------
 
+    // ---------------- 选项分词（给 fs_search / fs_replace 用）----------------
+
+    /// <summary>
+    /// 把参数串拆成 位置参数 + 开关(--flag) + 带值选项(--glob/--limit/--context)。
+    /// 选项可出现在任意位置；其余按出现顺序作为位置参数（替换串可以是多个词，最后拼回去）。
+    /// </summary>
+    private static (List<string> Pos, HashSet<string> Flags, Dictionary<string, string> Opts) Tokenize(string args)
+    {
+        var pos = new List<string>();
+        var flags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var opts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var toks = args.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        for (var i = 0; i < toks.Length; i++)
+        {
+            var tok = toks[i];
+            if (tok is "-i") { flags.Add("--ignore-case"); continue; }
+            if (!tok.StartsWith("--")) { pos.Add(tok); continue; }
+            if (tok is "--glob" or "--limit" or "--context")
+            {
+                if (i + 1 < toks.Length) opts[tok.ToLowerInvariant()] = toks[++i];
+                continue;
+            }
+            flags.Add(tok.ToLowerInvariant());
+        }
+        return (pos, flags, opts);
+    }
+
+    private async Task<string> SearchCommandAsync(string args)
+    {
+        try
+        {
+            var (pos, flags, opts) = Tokenize(args);
+            if (pos.Count < 2) return "参数不足：fs_search <路径|目录> <正则> [--glob *.cs] [--ignore-case] [--limit N] [--context N] [--files-only]";
+            var limit = opts.TryGetValue("--limit", out var ls) && int.TryParse(ls, out var l) && l > 0 ? l : 50;
+            var context = opts.TryGetValue("--context", out var cs) && int.TryParse(cs, out var c) && c > 0 ? c : 0;
+            // 原方法按 p[2..] 扫选项，这里把选项按老格式拼回去（顺序无关）
+            var p = new List<string> { pos[0], pos[1] };
+            if (limit != 50) { p.Add("--limit"); p.Add(limit.ToString()); }
+            if (context > 0) { p.Add("--context"); p.Add(context.ToString()); }
+            if (flags.Contains("--files-only")) p.Add("--files-only");
+            if (flags.Contains("--ignore-case")) p.Add("--ignore-case");
+            if (opts.TryGetValue("--glob", out var g)) { p.Add("--glob"); p.Add(g); }
+            return await SearchAsync(p.ToArray());
+        }
+        catch (Exception ex) { return $"操作失败: {ex.Message}"; }
+    }
+
+    private async Task<string> ReplaceCommandAsync(string args)
+    {
+        try
+        {
+            var (pos, flags, opts) = Tokenize(args);
+            if (pos.Count < 3) return "参数不足：fs_replace <路径|目录> <正则> <替换串> [--apply] [--glob *.cs] [--ignore-case] [--backup]";
+            var p = new List<string> { pos[0], pos[1], string.Join(" ", pos.Skip(2)) };
+            if (flags.Contains("--apply")) p.Add("--apply");
+            if (flags.Contains("--backup")) p.Add("--backup");
+            if (flags.Contains("--ignore-case")) p.Add("--ignore-case");
+            if (opts.TryGetValue("--glob", out var g)) { p.Add("--glob"); p.Add(g); }
+            return await ReplaceAsync(p.ToArray());
+        }
+        catch (Exception ex) { return $"操作失败: {ex.Message}"; }
+    }
+    // ---------------- 搜索 / 替换 ----------------
+    // 两者共用一套"目标文件枚举"：支持单文件或整目录、--glob 过滤、跳过 .shadow、跳过二进制与超大文件。
+
+    /// <summary>枚举待处理文件（目录则递归）；glob 为空表示全部文件</summary>
+    private IEnumerable<string> EnumerateTargets(string target, string? glob)
+    {
+        if (File.Exists(target)) return [target];
+        var opts = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            AttributesToSkip = FileAttributes.ReparsePoint,
+        };
+        return Directory.EnumerateFiles(target, string.IsNullOrWhiteSpace(glob) ? "*" : glob, opts)
+                        .Where(f => !f.Contains(".shadow"));
+    }
+
+    /// <summary>看前 4KB 有没有 NUL 字节判断二进制（避免把图片/压缩包当文本处理）</summary>
+    private static bool LooksBinary(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            var buf = new byte[4096];
+            var n = fs.Read(buf, 0, buf.Length);
+            for (var i = 0; i < n; i++) if (buf[i] == 0) return true;
+            return false;
+        }
+        catch { return true; }
+    }
+
     private async Task<string> SearchAsync(string[] p)
     {
-        // p[0] = 文件或目录，p[1] = 正则，p[2] = 可选上限（默认 50 行）
+        // p[0] = 文件或目录，p[1] = 正则，其余为选项
         var target = SafePath(p[0]);
         if (target is null) return Reject(p[0]);
-        Regex rx;
-        try { rx = new Regex(p[1], RegexOptions.Compiled); }
-        catch (Exception ex) { return $"正则无效: {ex.Message}"; }
-        var limit = p.Length > 2 && int.TryParse(p[2].Trim(), out var n) && n > 0 ? n : 50;
+        if (!File.Exists(target) && !Directory.Exists(target)) return $"不存在: {p[0]}";
 
-        // 收集待搜文件：单个文件或目录下全部文本文件
-        var files = new List<string>();
-        if (File.Exists(target)) files.Add(target);
-        else if (Directory.Exists(target))
+        string? glob = null;
+        var ignoreCase = false;
+        var filesOnly = false;
+        var limit = 50;
+        var context = 0;
+        for (var i = 2; i < p.Length; i++)
         {
-            // 目录：递归搜文本类文件（.cs/.json/.md/.txt）
-            files.AddRange(Directory.EnumerateFiles(target, "*.*", SearchOption.AllDirectories)
-                .Where(f => !f.Contains(".shadow"))
-                .Where(f => f.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
-                         || f.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
-                         || f.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
-                         || f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)));
+            var a = p[i];
+            if (a is "--ignore-case" or "-i") ignoreCase = true;
+            else if (a is "--files-only") filesOnly = true;
+            else if (a is "--glob" && i + 1 < p.Length) glob = p[++i];
+            else if (a is "--limit" && i + 1 < p.Length && int.TryParse(p[++i], out var n) && n > 0) limit = n;
+            else if (a is "--context" && i + 1 < p.Length && int.TryParse(p[++i], out var c) && c > 0) context = Math.Min(c, 5);
         }
-        else return $"不存在: {p[0]}";
+
+        Regex rx;
+        try { rx = new Regex(p[1], RegexOptions.Compiled | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None)); }
+        catch (Exception ex) { return $"正则无效: {ex.Message}"; }
 
         var sb = new StringBuilder();
         var hits = 0;
-        foreach (var f in files)
+        var scanned = 0;
+        var fileHits = new List<string>();
+        foreach (var f in EnumerateTargets(target, glob))
         {
             if (hits >= limit) break;
+            try { if (new FileInfo(f).Length > _maxFileKb * 1024) continue; } catch { continue; }
+            if (LooksBinary(f)) continue;
+            scanned++;
+
             string text;
-            try { text = await File.ReadAllTextAsync(f); }
-            catch { continue; }
+            try { text = await File.ReadAllTextAsync(f); } catch { continue; }
             var lines = text.Split('\n');
+            var here = 0;
             for (var i = 0; i < lines.Length && hits < limit; i++)
             {
                 if (!rx.IsMatch(lines[i])) continue;
+                here++;
                 hits++;
-                var preview = lines[i].Length > 200 ? lines[i][..200] + "…" : lines[i].TrimEnd();
-                sb.AppendLine($"{Rel(f)}:{i + 1}: {preview}");
+                if (filesOnly) continue;
+
+                // 上下文（前 N 行 / 后 N 行）：只在有 context 时输出，且不重复打印同一行
+                if (context > 0)
+                {
+                    var from = Math.Max(0, i - context);
+                    for (var k = from; k < i; k++) sb.AppendLine($"  {Rel(f)}:{k + 1}- {Clip(lines[k])}");
+                }
+                sb.AppendLine($"{Rel(f)}:{i + 1}: {Clip(lines[i])}");
+                if (context > 0)
+                {
+                    var to = Math.Min(lines.Length - 1, i + context);
+                    for (var k = i + 1; k <= to; k++) sb.AppendLine($"  {Rel(f)}:{k + 1}- {Clip(lines[k])}");
+                }
             }
+            if (here > 0) fileHits.Add($"{Rel(f)}({here})");
         }
-        if (sb.Length == 0) return $"未命中（0 行）";
-        sb.AppendLine($"— 共 {hits} 行命中{(hits >= limit ? $"（达上限 {limit}，可能不止）" : "")}");
+
+        if (filesOnly)
+            return fileHits.Count == 0
+                ? $"未命中（扫描 {scanned} 个文件）"
+                : $"{fileHits.Count} 个文件命中（扫描 {scanned} 个）: {string.Join(", ", fileHits.Take(60))}";
+        if (sb.Length == 0) return $"未命中（扫描 {scanned} 个文件）";
+
+        sb.AppendLine($"— 共 {hits} 行命中{(hits >= limit ? $"（达上限 {limit}，可能不止）" : "")}，涉及 {fileHits.Count} 个文件");
         return sb.ToString().TrimEnd();
+    }
+
+    private static string Clip(string s)
+    {
+        s = s.TrimEnd();
+        return s.Length > 200 ? s[..200] + "…" : s;
     }
 
     private async Task<string> ReplaceAsync(string[] p)
     {
-        // p[0] = 单文件，p[1] = 正则，p[2] = 替换串（支持 $1 等分组引用；字面 \n 还原换行）
-        var path = SafePath(p[0]);
-        if (path is null) return Reject(p[0]);
-        if (!File.Exists(path)) return $"文件不存在: {p[0]}";
+        // p[0] = 文件或目录，p[1] = 正则，p[2] = 替换串（支持 $1 等分组引用；字面 \n \t 还原），其余为选项
+        // **默认只预览不落盘**：改动文件的高危操作，先看清楚再 --apply。
+        var target = SafePath(p[0]);
+        if (target is null) return Reject(p[0]);
+        if (!File.Exists(target) && !Directory.Exists(target)) return $"不存在: {p[0]}";
+
+        string? glob = null;
+        var ignoreCase = false;
+        var apply = false;
+        var backup = false;
+        for (var i = 3; i < p.Length; i++)
+        {
+            var a = p[i];
+            if (a is "--apply") apply = true;
+            else if (a is "--backup") backup = true;
+            else if (a is "--ignore-case" or "-i") ignoreCase = true;
+            else if (a is "--glob" && i + 1 < p.Length) glob = p[++i];
+        }
+
         Regex rx;
-        try { rx = new Regex(p[1], RegexOptions.Compiled); }
+        try { rx = new Regex(p[1], RegexOptions.Compiled | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None)); }
         catch (Exception ex) { return $"正则无效: {ex.Message}"; }
-        var text = await File.ReadAllTextAsync(path);
+
         var replacement = p[2].Replace("\\n", "\n").Replace("\\t", "\t");
-        var newText = rx.Replace(text, replacement);
-        if (newText == text) return "未发生变化（无命中或替换后相同）";
-        if (newText.Length > _maxFileKb * 1024) return $"拒绝：替换后超过单文件上限 {_maxFileKb}KB";
-        await File.WriteAllTextAsync(path, newText);
-        return $"已替换 {Rel(path)}（{rx.Matches(text).Count} 处，新长度 {newText.Length} 字符）";
+        var report = new List<string>();
+        var filesChanged = 0;
+        var totalHits = 0;
+        var skipped = 0;
+
+        foreach (var f in EnumerateTargets(target, glob))
+        {
+            try { if (new FileInfo(f).Length > _maxFileKb * 1024) { skipped++; continue; } } catch { skipped++; continue; }
+            if (LooksBinary(f)) { skipped++; continue; }
+
+            string text;
+            try { text = await File.ReadAllTextAsync(f); } catch { skipped++; continue; }
+            var m = rx.Matches(text);
+            if (m.Count == 0) continue;
+            var newText = rx.Replace(text, replacement);
+            if (newText == text) continue;
+            if (newText.Length > _maxFileKb * 1024)
+            {
+                skipped++;
+                report.Add($"跳过 {Rel(f)}：替换后超过单文件上限 {_maxFileKb}KB");
+                continue;
+            }
+
+            if (!apply)
+            {
+                filesChanged++;
+                totalHits += m.Count;
+                report.Add($"将改 {Rel(f)}：{m.Count} 处");
+                continue;
+            }
+
+            try
+            {
+                if (backup)
+                {
+                    var bak = f + ".bak";
+                    if (!File.Exists(bak)) File.Copy(f, bak, false);
+                }
+                await File.WriteAllTextAsync(f, newText);
+                filesChanged++;
+                totalHits += m.Count;
+                report.Add($"已改 {Rel(f)}：{m.Count} 处{(backup ? "（已备份 .bak）" : "")}");
+            }
+            catch (Exception ex) { report.Add($"失败 {Rel(f)}：{ex.Message}"); skipped++; }
+        }
+
+        if (filesChanged == 0)
+            return $"未命中（无需替换；跳过大文件/二进制 {skipped} 个）";
+
+        var head = apply
+            ? $"[已写入] {filesChanged} 个文件 / {totalHits} 处"
+            : $"[预览，未写入] {filesChanged} 个文件 / {totalHits} 处 —— 确认无误后加 --apply 落盘";
+        var body = string.Join("\n", report.Take(60));
+        var more = report.Count > 60 ? $"\n…还有 {report.Count - 60} 个文件未列出" : "";
+        var skipNote = skipped > 0 ? $"\n（跳过大文件/二进制 {skipped} 个）" : "";
+        return $"{head}\n{body}{more}{skipNote}";
     }
 
     private string Rel(string full) =>
