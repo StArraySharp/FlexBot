@@ -45,12 +45,15 @@ dotnet run --project FlexBot
 
 | 参数 | 效果 |
 |---|---|
-| （无） | 有可用图形界面就打开 Photino 桌面窗口（内容即 WebUI 页面），关窗即退出；Windows 服务/Session 0、Linux 无 `DISPLAY`/`WAYLAND_DISPLAY` 时自动退化 |
-| `--no-gui` / `--headless` | 强制无窗口：控制台常驻 + 浏览器访问 WebUI |
-| `--browser` | 用系统 Chrome/Edge 以 `--app=` 应用窗口打开 WebUI（无地址栏） |
-| `--gui` | 强制重试原生 Photino 窗口；创建失败仍回退无窗口，不杀进程 |
-| `--no-web` | 不开 WebUI（纯机器人） |
+| （不带参数） | 开应用窗口：系统 Chrome/Edge `--app=URL`（无地址栏；专属 profile 复用同一窗口），控制台收起 |
+| `--native` / `--gui` | 进程内 Photino 原生窗口（依赖 WebView2；失败只提示，不静默兜底） |
+| `--no-gui` / `--headless` | 不开窗口，控制台常驻 |
+| `--console` | 开窗口时也保留控制台 |
+| `--no-web` | 不开 WebUI |
+| `--allow-multiple` | 故意多开（默认同目录单实例，防重复回复） |
 
+决策与执行都集中在 `FlexBot/WebUi/AppShell.cs`（模式判定 + 控制台收起 + 开窗口），
+`FlexBot/WebUi/PhotinoGui.cs` 只负责 `--native` 的原生窗口，`ConsoleWindow.cs` 管控制台显隐。
 探测逻辑（`FlexBot/WebUi/GuiSupport.cs`）保守判断：Windows 用 `Environment.UserInteractive`，macOS 默认可用，Linux 看 `DISPLAY`/`WAYLAND_DISPLAY`；不确定时按"没有"处理。
 启动后控制台会打印 WebUI 地址（本机地址 `http://127.0.0.1:<端口>`；实际监听 `0.0.0.0`，局域网可达），浏览器打开即可管理。登录失败会按来源 IP 指数退避（前 2 次立即返回，之后 2/4/8… 秒，上限 5 分钟）。
 

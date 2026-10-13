@@ -69,20 +69,15 @@ read <名>  readsrc <名> <相对路径>  log <名> [行数]  llm <名> [序号]
 
 | 参数 | 效果 |
 |---|---|
-| （无） | 有图形界面就开窗口，没有就退化为 WebUI |
-| `--no-gui` | 强制无窗口：控制台常驻 + 浏览器访问 WebUI（后台/服务器用） |
-| `--browser` | 直接用系统 Chrome/Edge 以「应用窗口」（无地址栏）打开 WebUI —— 本机 WebView2 渲染不出来时的最优解 |
-| `--gui` | 强制重试原生 Photino 窗口（会清掉"WebView2 不可用"的记录） |
-| `--no-web` | 连 WebUI 都不开（纯机器人，无管理页面） |
+| （不带参数） | **开应用窗口**：用系统 Chrome/Edge 以 `--app=` 打开 WebUI（无地址栏，专属 profile ⇒ 反复启动复用同一个窗口），控制台自动收起 |
+| `--native`（旧名 `--gui`） | 改用进程内 Photino 原生窗口（依赖 WebView2；本机 WebView2 异常时会明确提示，不做静默兜底） |
+| `--no-gui` / `--headless` | 不开窗口，控制台常驻（服务器/后台跑用这个） |
+| `--console` | 即使开窗口也保留控制台窗口 |
+| `--no-web` | 连 WebUI 都不开（纯机器人） |
+| `--allow-multiple` | 故意多开（**同一目录默认只允许一个宿主**：两个宿主同连一个 OneBot 实现会重复回复） |
 
-```bash
-# Windows：解压后双击 FlexBot.exe
-# Linux
-chmod +x FlexBot && ./FlexBot
-# macOS（包未签名，不去隔离会被 Gatekeeper 拦下）
-xattr -dr com.apple.quarantine FlexBot && ./FlexBot
-```
-
+没有图形界面（无 `DISPLAY`、Windows 服务/会话 0）时自动退化为纯控制台模式，浏览器手动打开控制台打印的地址即可。
+第二次启动会被拒绝并提示已在运行实例的 WebUI 地址。
 ### 3. 首次配置
 
 1. 控制台会打印 **WebUI 地址**，以及一个**随机登录密码**（明文只打印这一次，不写日志）

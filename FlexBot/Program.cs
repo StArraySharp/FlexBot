@@ -29,6 +29,15 @@ internal static class Program
         var _origOut = Console.Out;
         Console.SetOut(new TimestampWriter(_origOut));
 
+        // 单实例：同一份程序只允许一个宿主（加 --allow-multiple 可跳过）。
+        // 两个宿主同连一个 OneBot 实现会重复回复、抢日志与端口，所以默认拒绝。
+        if (!args.Contains("--allow-multiple") && !SingleInstance.TryAcquire(out var ownerHint))
+        {
+            Console.WriteLine("[boot] 已有 FlexBot 实例在运行（同一目录只允许一个）；如需故意多开请加 --allow-multiple");
+            if (ownerHint.Length > 0) Console.WriteLine($"[boot] 已在运行的实例 WebUI: {ownerHint}");
+            return;
+        }
+
         // 配置机密加密：密钥在 exe 旁（.secret.key），必须在读 config.json 之前载入。
         // 路径固定放在 exe 旁而非 memory/，避免 MemoryDir 改了以后旧密文再也解不开。
         SecretBox.Init(Path.Combine(AppContext.BaseDirectory, ".secret.key"));
@@ -329,7 +338,8 @@ internal static class Program
         {
             try
             {
-                procMgr.StartDependenciesAsync(settings.NapCatCmd, settings.LLBotCmd).GetAwaiter().GetResult();   // 同步 Main：这里不能 await
+                // 依赖进程（NapCat/LLBot）放后台启动：它会等几秒就绪，不能挡在窗口前面
+        _ = Task.Run(() => procMgr.StartDependenciesAsync(settings.NapCatCmd, settings.LLBotCmd));
             }
             catch (Exception ex)
             {
@@ -408,49 +418,52 @@ internal static class Program
         {
             uiUrl = FlexBotWebUi.Start(plugins, settings, client, procMgr, () => RequestShutdown("WebUI 请求停止"));
             Console.WriteLine($"[webui] 控制台已就绪: {uiUrl}");
+            SingleInstance.WriteOwnerHint(settings.MemoryDir, uiUrl);   // 供重复启动时提示"已在运行的实例"
         }
+        // ===================== 运行形态（规则见 FlexBot/WebUi/AppShell.cs 的注释）=====================
+        //   默认       → 浏览器应用窗口（Chrome/Edge --app，专属 profile 复用同一窗口）+ 收起控制台
+        //   --native   → 进程内 Photino 原生窗口（需 WebView2；不可用时提示改用默认，不静默兜底）
+        //   --no-gui   → 不开窗口，控制台常驻
+        //   --console  → 即使开窗口也保留控制台
+        //   --no-web   → 连 WebUI 都不开
+        var browserProfile = Path.Combine(settings.MemoryDir, "browser-profile");
+        var runMode = AppShell.ResolveMode(args, uiUrl is not null);
+        var useNative = args.Contains("--native") || args.Contains("--gui");   // --gui 是 --native 的旧名，保留兼容
 
-        // ===================== 运行模式：默认开窗口，没有图形界面就用 WebUI =====================
-        // 规则（跨平台）：
-        //   默认       → 有可用图形界面就开 Photino 窗口（页面仍是 WebUI），关窗即退出
-        //   --browser  → 直接用系统浏览器以「应用窗口」打开 WebUI（本机 WebView2 渲染不出来时的最优解）
-        //   --gui      → 强制重试原生 Photino 窗口（会清掉"WebView2 不可用"的标记）
-        //   --no-gui   → 强制无窗口：控制台常驻 + 浏览器访问 WebUI（服务器/后台跑就用这个）
-        //   --no-web   → 连 WebUI 都不开（纯机器人，无管理页面）
-        // 自适应：若上次发现本机 WebView2 渲染不出页面，则之后默认走浏览器应用窗口（标记文件可删）
-        var forceGui = args.Contains("--gui");
-        var forceBrowser = args.Contains("--browser");
-        var noGui = args.Contains("--no-gui") || args.Contains("--headless");
-        var guiWanted = uiUrl is not null && (forceGui || forceBrowser || !noGui);
-        var guiUsable = uiUrl is not null && (forceGui || forceBrowser || (!noGui && GuiSupport.Available));
-
-        var fallbackMarker = Path.Combine(settings.MemoryDir, "gui-fallback.txt");
-        if (forceGui) { try { File.Delete(fallbackMarker); } catch { } }
-        var webViewBroken = !forceGui && File.Exists(fallbackMarker);
-
-        if (guiWanted && !guiUsable && !forceGui && !forceBrowser)
-            Console.WriteLine($"[boot] 未检测到可用图形界面（{GuiSupport.Describe()}）：以无窗口模式运行，浏览器打开上面的 WebUI 地址");
-        else if (noGui && !forceGui && !forceBrowser && uiUrl is not null)
-            Console.WriteLine("[boot] 已指定 --no-gui：无窗口模式（浏览器打开上面的 WebUI 地址）");
-
-        if (uiUrl is not null && (forceBrowser || (guiUsable && webViewBroken)))
+        if (runMode == RunMode.AppWindow && !useNative && !GuiSupport.Available)
         {
-            if (webViewBroken && !forceBrowser)
-                Console.WriteLine("[boot] 上次记录到本机 WebView2 无法渲染页面：改用浏览器应用窗口（加 --gui 可强制重试原生窗口）");
-            BrowserWindow.Open(uiUrl);
-            coreTask.GetAwaiter().GetResult();
+            Console.WriteLine($"[boot] 未检测到图形界面（{GuiSupport.Describe()}）：改为纯控制台运行，可浏览器打开 {uiUrl}");
+            runMode = RunMode.ConsoleOnly;
         }
-        else if (guiUsable && uiUrl is not null)
+        else if (runMode == RunMode.ConsoleOnly && !args.Contains("--no-web"))
         {
-            // WindowClosed = 用户关窗 ⇒ 走收尾退出；Unavailable / FellBackToBrowser ⇒ 继续常驻
-            if (PhotinoGui.Run(uiUrl, () => RequestShutdown("窗口关闭"), fallbackMarker) != GuiResult.WindowClosed)
-                coreTask.GetAwaiter().GetResult();
-        }
-        else
-        {
-            coreTask.GetAwaiter().GetResult();
+            Console.WriteLine("[boot] 纯控制台运行（浏览器打开上面的 WebUI 地址；要开窗口去掉 --no-gui）");
         }
 
+        if (AppShell.ShouldHideConsole(args, runMode) && ConsoleWindow.Hide())
+            Console.WriteLine("[boot] 已收起控制台窗口（日志见 WebUI 日志页；需要控制台请加 --console）");
+
+        var nativeWindowClosed = false;
+        if (runMode == RunMode.AppWindow && uiUrl is not null)
+        {
+            if (useNative)
+            {
+                if (PhotinoGui.TryRun(uiUrl)) nativeWindowClosed = true;
+                else
+                {
+                    Console.WriteLine($"[boot] 原生窗口不可用：请改用默认模式（去掉 --native）获得浏览器应用窗口，或访问 {uiUrl}");
+                    if (AppShell.ShouldHideConsole(args, runMode)) ConsoleWindow.Show();
+                }
+            }
+            else
+            {
+                AppShell.OpenAppWindow(uiUrl, browserProfile);
+            }
+        }
+
+        // 浏览器应用窗口是外部进程、无法感知关窗 ⇒ 常驻运行；退出用 Ctrl+C 或 WebUI「优雅停止宿主」。
+        // 原生窗口则是"关窗即退出"，此处不再阻塞。
+        if (!nativeWindowClosed) coreTask.GetAwaiter().GetResult();
         // 两条路径（控制台 / --gui 窗口关闭）都汇合到这里收尾：卸载插件 → 断开通道 → 停依赖进程
         if (Volatile.Read(ref shuttingDown) == 0)
         {
