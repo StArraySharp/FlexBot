@@ -1,4 +1,40 @@
 /* ---------- 日志 ---------- */
+// ---- ANSI 颜色：把子进程日志里的 \x1b[32m…\x1b[0m 解析成彩色 span ----
+// 先转义 HTML 再拼标签，日志里出现的 < & 不会破坏结构；光标移动等非 SGR 序列直接丢弃。
+const ANSI_FG = {
+  30: '#8b949e', 31: '#ff7b72', 32: '#7ee787', 33: '#d29922', 34: '#79c0ff',
+  35: '#d2a8ff', 36: '#56d4dd', 37: '#c9d1d9',
+  90: '#6e7681', 91: '#ffa198', 92: '#aff5b4', 93: '#e3b341', 94: '#a5d6ff',
+  95: '#d2a8ff', 96: '#76e3ea', 97: '#f0f6fc'
+};
+function escHtml(s) {
+  return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function ansiToHtml(text) {
+  const re = /\u001b\[([0-9;]*)m|\u001b\[[0-9;?]*[ -\/]*[@-~]/g;
+  let out = '', last = 0, open = false, m;
+  while ((m = re.exec(text)) !== null) {
+    out += escHtml(text.slice(last, m.index));
+    last = re.lastIndex;
+    if (!m[0].endsWith('m')) continue;            // 非 SGR：丢弃
+    const codes = (m[1] || '').split(';').filter(x => x !== '');
+    let color = null, bold = false, reset = codes.length === 0;
+    for (const c of codes) {
+      const n = parseInt(c, 10);
+      if (n === 0) reset = true;
+      else if (n === 1) bold = true;
+      else if (ANSI_FG[n]) color = ANSI_FG[n];
+    }
+    if (open) { out += '</span>'; open = false; }
+    if (!reset && (color || bold)) {
+      const style = (color ? 'color:' + color + ';' : '') + (bold ? 'font-weight:600;' : '');
+      out += '<span style="' + style + '">';
+      open = true;
+    }
+  }
+  out += escHtml(text.slice(last));
+  return out + (open ? '</span>' : '');
+}
 function classify(t) {
   if (/\[error\]|\[异常|失败|FAILED|Exception/.test(t)) return 'err';
   if (/\[warn\]|\[!\]/.test(t)) return 'warn';
@@ -13,14 +49,14 @@ function appendLine(t, mini) {
     const box = $('miniLog');
     const d = document.createElement('div');
     d.className = 'l ' + classify(t);
-    d.textContent = t;
+    d.innerHTML = ansiToHtml(t);
     box.appendChild(d);
     while (box.children.length > 10) box.removeChild(box.firstChild);
     return;
   }
   const div = document.createElement('div');
   div.className = 'l ' + classify(t);
-  div.textContent = t;
+  div.innerHTML = ansiToHtml(t);
   applyFilter(div, t);
   const log = $('log');
   log.appendChild(div);

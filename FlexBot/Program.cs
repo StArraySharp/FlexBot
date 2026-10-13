@@ -28,6 +28,9 @@ internal static class Program
         // WinExe 子系统下进程默认没有控制台：--no-gui 时先按需开通，后面的日志才看得到
         if (args.Contains("--no-gui")) FlexBot.WebUi.ConsoleWindow.EnsureConsole();
         try { Console.OutputEncoding = Encoding.UTF8; } catch { }
+        // 控制台打开 VT 解析：否则子进程（LLBot/NapCat）的彩色日志会显示成 [0m、[32m 这类字面量
+        if (FlexBot.WebUi.AnsiConsole.EnableVirtualTerminal())
+            Console.WriteLine("[boot] 控制台已启用 ANSI 颜色解析");
         var _origOut = Console.Out;
         Console.SetOut(new TimestampWriter(_origOut));
 
@@ -437,6 +440,7 @@ internal static class Program
             {
                 // 窗口没能渲染（典型：WebView2 环境创建失败）⇒ 退回控制台 + WebUI
                 ConsoleWindow.EnsureConsole();
+                FlexBot.WebUi.AnsiConsole.EnableVirtualTerminal();
                 Console.WriteLine($"[boot] 已退回控制台 + WebUI：请用浏览器打开 {uiUrl}（修好 WebView2 运行时即可恢复原生窗口）");
             }
         }
