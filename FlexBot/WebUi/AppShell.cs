@@ -1,107 +1,84 @@
-using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Microsoft.Win32;
 
 namespace FlexBot.WebUi;
 
-/// <summary>运行形态：有应用窗口，还是纯控制台</summary>
+/// <summary>运行形态</summary>
 enum RunMode
 {
-    /// <summary>开一个应用窗口（默认）：浏览器以 --app 模式加载 WebUI，控制台收起</summary>
+    /// <summary>原生应用窗口（Photino + WebView2），默认</summary>
     AppWindow,
-    /// <summary>只跑控制台：不开窗口，日志直接在控制台看</summary>
+    /// <summary>纯控制台：不开窗口，浏览器手动打开 WebUI</summary>
     ConsoleOnly,
 }
 
 /// <summary>
-/// 启动形态的唯一决策与执行点（重写后：**没有自适应魔法、没有标记文件、没有自检等待**）。
+/// 启动形态判定（唯一参数：<c>--no-gui</c>）。
 ///
-/// 规则（只有一个参数）:
-///   默认      → 开应用窗口：用系统 Chrome/Edge 以 --app=URL 打开 WebUI（专属 profile ⇒ 复用同一个窗口），控制台收起
-///   --no-gui  → 不开窗口：控制台常驻，浏览器手动打开控制台打印的地址
+/// 规则
+///   默认      → 原生应用窗口（Photino 加载 WebUI 页面），进程用 WinExe 子系统 ⇒ 没有多余的控制台窗口
+///   --no-gui  → 不开窗口：按需开通控制台，浏览器手动打开控制台打印的地址
 ///
-/// 为什么默认不用 Photino：本机 WebView2 环境可能创建失败（窗口纯黑、无任何页面请求），
-/// 而系统浏览器一定能渲染。默认走浏览器应用窗口 ⇒ 启动即可见、行为稳定、无需猜测。
+/// 什么时候不走窗口（自动退化为控制台 + WebUI）：
+///   · 没有图形界面：Linux 未设置 DISPLAY/WAYLAND_DISPLAY；Windows 处于非交互会话（服务/会话 0）
+///   · Windows 上没有可用的 WebView2 运行时（注册表里查不到版本）
+///   · 窗口起来了但始终渲染不出页面（见 PhotinoGui 的自检）
 /// </summary>
 static class AppShell
 {
-    /// <summary>纯函数式判定：只看参数与"WebUI 是否可用"，便于阅读与测试</summary>
-    public static RunMode ResolveMode(string[] args, bool webUiAvailable)
-    {
-        if (!webUiAvailable) return RunMode.ConsoleOnly;                 // 没开 WebUI 就没窗口可开
-        if (args.Contains("--no-gui")) return RunMode.ConsoleOnly;
-        return RunMode.AppWindow;                                        // 默认
-    }
+    public static RunMode ResolveMode(string[] args) =>
+        args.Contains("--no-gui") ? RunMode.ConsoleOnly : RunMode.AppWindow;
 
-    /// <summary>是否需要收起控制台（Windows 有效）：开了窗口且没要求保留控制台</summary>
-    public static bool ShouldHideConsole(RunMode mode) =>
-        mode == RunMode.AppWindow;
-
-    /// <summary>
-    /// 打开应用窗口。专属 profile 让 Chrome/Edge 复用同一个窗口（反复启动不会堆窗口），
-    /// 并顺手清掉历史遗留的同类窗口（早期版本没带 profile，会越开越多）。
-    /// </summary>
-    public static bool OpenAppWindow(string url, string profileDir)
+    /// <summary>当前环境能否开原生窗口；不能时给出可读原因（写进日志）</summary>
+    public static bool PreferWindow(out string reason)
     {
+        reason = "";
         try
         {
-            Directory.CreateDirectory(profileDir);
-
-            var exe = FindChromium();
-            if (exe is not null)
+            if (OperatingSystem.IsWindows())
             {
-                Process.Start(new ProcessStartInfo(exe, $"--app={url} --user-data-dir=\"{profileDir}\"")
-                {
-                    UseShellExecute = false,
-                });
-                Console.WriteLine($"[gui] 应用窗口已打开: {Path.GetFileName(exe)} --app={url}（profile: {profileDir}）");
+                if (!Environment.UserInteractive) { reason = "Windows 非交互会话（服务/会话 0），没有桌面"; return false; }
+                var v = WebView2Version();
+                if (string.IsNullOrEmpty(v)) { reason = "未安装 WebView2 运行时"; return false; }
                 return true;
             }
 
-            // 没有 Chrome/Edge：交给系统默认浏览器（会带地址栏，但至少能用）
-            if (OperatingSystem.IsMacOS()) Process.Start(new ProcessStartInfo("open", url) { UseShellExecute = false });
-            else if (OperatingSystem.IsLinux()) Process.Start(new ProcessStartInfo("xdg-open", url) { UseShellExecute = false });
-            else Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            Console.WriteLine($"[gui] 未找到 Chrome/Edge，已用系统默认浏览器打开: {url}");
+            if (OperatingSystem.IsMacOS()) return true;
+
+            // Linux 等：必须有显示会话
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY")) &&
+                string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY")))
+            {
+                reason = "未检测到 X11/Wayland 显示会话";
+                return false;
+            }
             return true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[gui] 打开应用窗口失败: {ex.Message}（可手动浏览器访问 {url}，或用 --no-gui 启动）");
+            reason = $"环境探测失败：{ex.Message}";
             return false;
         }
     }
 
-    private static string? FindChromium()
+    /// <summary>已安装的 WebView2 运行时版本（读注册表；查不到返回空串）</summary>
+    private static string WebView2Version()
     {
-        var candidates = new List<string>();
-        if (OperatingSystem.IsWindows())
+        const string id = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
+        foreach (var root in new[] { Registry.LocalMachine, Registry.CurrentUser })
+        foreach (var sub in new[]
+                 {
+                     $@"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{id}",
+                     $@"SOFTWARE\Microsoft\EdgeUpdate\Clients\{id}",
+                 })
         {
-            var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-            candidates.AddRange(
-            [
-                Path.Combine(pf, @"Google\Chrome\Application\chrome.exe"),
-                Path.Combine(pf86, @"Google\Chrome\Application\chrome.exe"),
-                Path.Combine(pf, @"Microsoft\Edge\Application\msedge.exe"),
-                Path.Combine(pf86, @"Microsoft\Edge\Application\msedge.exe"),
-            ]);
-        }
-        else if (OperatingSystem.IsMacOS())
-        {
-            candidates.AddRange(
-            [
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-            ]);
-        }
-        else
-        {
-            foreach (var n in new[] { "google-chrome", "chromium", "chromium-browser", "microsoft-edge" })
+            try
             {
-                var hit = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
-                    .Select(dir => Path.Combine(dir, n)).FirstOrDefault(File.Exists);
-                if (hit is not null) candidates.Add(hit);
+                using var key = root.OpenSubKey(sub);
+                if (key?.GetValue("pv") is string pv && pv.Length > 0) return pv;
             }
+            catch { }
         }
-        return candidates.FirstOrDefault(File.Exists);
+        return "";
     }
 }

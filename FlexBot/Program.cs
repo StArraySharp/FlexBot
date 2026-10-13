@@ -25,6 +25,8 @@ internal static class Program
         // 全局日志：每行自动带时间戳（HH:mm:ss.fff）+ 进入环形缓冲（WebUI 用）
         // 必须在捕获 Console.Out 之前切 UTF-8：writer 的编码在创建时固定，
         // 之后再改 OutputEncoding 不会影响已捕获的 writer（中文 Windows 默认 GBK 会导致乱码）
+        // WinExe 子系统下进程默认没有控制台：--no-gui 时先按需开通，后面的日志才看得到
+        if (args.Contains("--no-gui")) FlexBot.WebUi.ConsoleWindow.EnsureConsole();
         try { Console.OutputEncoding = Encoding.UTF8; } catch { }
         var _origOut = Console.Out;
         Console.SetOut(new TimestampWriter(_origOut));
@@ -417,23 +419,29 @@ internal static class Program
         Console.WriteLine($"[webui] 控制台已就绪: {uiUrl}");
         SingleInstance.WriteOwnerHint(settings.MemoryDir, uiUrl);   // 供重复启动时提示"已在运行的实例"
 
-        // ===================== 运行形态（唯一参数 --no-gui；规则见 FlexBot/WebUi/AppShell.cs）=====================
-        //   默认      → 浏览器应用窗口（Chrome/Edge --app，专属 profile 复用同一窗口）+ 控制台收起
-        //   --no-gui  → 不开窗口，控制台常驻（浏览器手动打开上面的地址）
-        var runMode = AppShell.ResolveMode(args, webUiAvailable: true);
-        if (runMode == RunMode.AppWindow && !GuiSupport.Available)
+        // ===================== 启动形态（唯一参数 --no-gui；规则见 FlexBot/WebUi/AppShell.cs）=====================
+        var runMode = AppShell.ResolveMode(args);
+        if (runMode == RunMode.AppWindow && !AppShell.PreferWindow(out var why))
         {
-            Console.WriteLine($"[boot] 未检测到图形界面（{GuiSupport.Describe()}）：改为纯控制台运行，可浏览器打开 {uiUrl}");
+            ConsoleWindow.EnsureConsole();
+            Console.WriteLine($"[boot] 不开原生窗口（{why}）：改用控制台 + WebUI，浏览器打开 {uiUrl}");
             runMode = RunMode.ConsoleOnly;
         }
 
-        if (AppShell.ShouldHideConsole(runMode) && ConsoleWindow.Hide())
-            Console.WriteLine("[boot] 已收起控制台窗口（日志见 WebUI 日志页；想看控制台请加 --no-gui）");
-
+        var windowRendered = false;
         if (runMode == RunMode.AppWindow)
-            AppShell.OpenAppWindow(uiUrl, Path.Combine(settings.MemoryDir, "browser-profile"));
+        {
+            // 官方示例的写法：就在这个 STA 主线程上建窗并阻塞到关窗
+            windowRendered = PhotinoGui.TryRun(uiUrl, () => RequestShutdown("窗口关闭"));
+            if (!windowRendered)
+            {
+                // 窗口没能渲染（典型：WebView2 环境创建失败）⇒ 退回控制台 + WebUI
+                ConsoleWindow.EnsureConsole();
+                Console.WriteLine($"[boot] 已退回控制台 + WebUI：请用浏览器打开 {uiUrl}（修好 WebView2 运行时即可恢复原生窗口）");
+            }
+        }
 
-        // 应用窗口是外部浏览器进程、无法感知关窗 ⇒ 一直常驻；退出用 Ctrl+C 或 WebUI「优雅停止宿主」
+        // 窗口模式：关窗即退出（上面的回调已触发收尾）；控制台模式或已退回：常驻到 Ctrl+C / WebUI 停止
         coreTask.GetAwaiter().GetResult();
         // 全部路径都汇合到这里收尾：卸载插件 → 断开通道 → 停依赖进程
         if (Volatile.Read(ref shuttingDown) == 0)
