@@ -1,4 +1,5 @@
 using System.Text;
+using System.Runtime.InteropServices;
 using FlexBot;
 using FlexBot.PluginApi;
 using FlexBot.WebUi;
@@ -147,6 +148,9 @@ client.OnGroupMessage += (s, e) => _ = HandleGroupAsync(e);
 // 群消息：先做宿主命令分发（带前缀的命令对所有人开放，安全命令内部鉴权），未命中交给插件
 async Task HandleGroupAsync(GroupMessageEventArgs e)
 {
+    // 去重放在最前：重连重放/重复投递的同一条消息只处理一次（含绑定的重复请求）
+    if (MessageDedup.IsDuplicate($"{client.TransportName}:g:{e.Message.MessageId}")) return;
+
     // 官方通道的身份绑定要在权限门禁之前处理（此时主人还没有身份），用控制台一次性口令保护
     if (await TryHandleBindAsync(e.Message,
             r => client.SendGroupMsgAsync(e.Message.GroupId ?? 0, Msg.Quote(e.Message.MessageId, r))))
@@ -310,6 +314,68 @@ if (settings.IsolateDependencyLogs && (!string.IsNullOrWhiteSpace(settings.NapCa
     }
 }
 
+// ===================== 优雅停机 =====================
+// 退出信号统一在这里收口：Ctrl+C(SIGINT) / kill(SIGTERM) / 控制台关闭或注销(SIGHUP)，
+// 外加 ProcessExit 兜底（任务管理器结束进程等）。POSIX 信号在 Windows 上同样由 .NET 投递。
+// 注意 Cancel=true：默认动作是立刻终止进程，不取消的话下面的收尾根本来不及跑。
+var shutdownTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+var shuttingDown = 0;
+var cleanupGate = new object();
+Task? cleanupTask = null;
+
+Task CleanupAsync()
+{
+    lock (cleanupGate) cleanupTask ??= DoCleanupAsync();
+    return cleanupTask;
+}
+
+async Task DoCleanupAsync()
+{
+    // 卸载插件：各自 OnUnloadAsync（停后台活动/等在途任务）+ Dispose（退订、调度器停止、KV 落盘）
+    try
+    {
+        var loaded = plugins.GetSnapshot().Where(p => p.Loaded).Select(p => p.Name).ToList();
+        if (loaded.Count > 0) Console.WriteLine($"[shutdown] 卸载插件: {string.Join(", ", loaded)}");
+        foreach (var name in loaded)
+            try { await plugins.UnloadAsync(name); }
+            catch (Exception ex) { Console.WriteLine($"[shutdown] 卸载 {name} 失败: {ex.Message}"); }
+    }
+    catch (Exception ex) { Console.WriteLine($"[shutdown] 卸载插件异常: {ex.Message}"); }
+
+    // 断开通道（在插件卸载之后：插件停干净了再断，回调不会再打进来）
+    try { await client.DisconnectAsync(); Console.WriteLine("[shutdown] 通道已断开"); }
+    catch (Exception ex) { Console.WriteLine($"[shutdown] 断开通道异常: {ex.Message}"); }
+
+    // 停掉随宿主拉起的 NapCat/LLBot（同时释放它们的日志文件句柄，避免下次启动撞文件锁）
+    try { procMgr.Dispose(); Console.WriteLine("[shutdown] 依赖进程已清理"); }
+    catch (Exception ex) { Console.WriteLine($"[shutdown] 清理依赖进程异常: {ex.Message}"); }
+}
+
+void RequestShutdown(string reason)
+{
+    if (Interlocked.Exchange(ref shuttingDown, 1) != 0) return;
+    Console.WriteLine($"[shutdown] 收到 {reason}，开始优雅停机…");
+    shutdownTcs.TrySetResult(true);
+    // 兜底路径：主流程可能被阻塞（--gui 窗口、stdin 重定向等），后台收尾后强制退出
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            var cleanup = CleanupAsync();
+            var done = await Task.WhenAny(cleanup, Task.Delay(TimeSpan.FromSeconds(20)));
+            if (!ReferenceEquals(done, cleanup)) Console.WriteLine("[shutdown] 收尾超时，直接退出");
+        }
+        catch (Exception ex) { Console.WriteLine($"[shutdown] 收尾异常: {ex.Message}"); }
+        Console.WriteLine("[+] Closed.");
+        Environment.Exit(0);
+    });
+}
+
+using var sigInt = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx => { ctx.Cancel = true; RequestShutdown("Ctrl+C"); });
+using var sigTerm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; RequestShutdown("SIGTERM"); });
+using var sigHup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, ctx => { ctx.Cancel = true; RequestShutdown("SIGHUP(控制台关闭)"); });
+AppDomain.CurrentDomain.ProcessExit += (_, _) => RequestShutdown("ProcessExit");
+
 // Bot 核心（后台运行：连接 NapCat + 加载插件 + 保活）
 var coreTask = Task.Run(RunBotAsync);
 
@@ -317,7 +383,7 @@ var coreTask = Task.Run(RunBotAsync);
 string? uiUrl = null;
 if (!args.Contains("--no-web"))
 {
-    uiUrl = WebUi.Start(plugins, settings, client, procMgr);
+    uiUrl = WebUi.Start(plugins, settings, client, procMgr, () => RequestShutdown("WebUI 请求停止"));
     Console.WriteLine($"[webui] 控制台已就绪: {uiUrl}");
 }
 
@@ -330,6 +396,15 @@ else
 {
     await coreTask;
 }
+
+// 两条路径（控制台 / --gui 窗口关闭）都汇合到这里收尾：卸载插件 → 断开通道 → 停依赖进程
+if (Volatile.Read(ref shuttingDown) == 0)
+{
+    Interlocked.Exchange(ref shuttingDown, 1);
+    Console.WriteLine("[shutdown] 主流程结束，开始收尾…");
+}
+await CleanupAsync();
+Console.WriteLine("[+] Closed.");
 
 async Task RunBotAsync()
 {
@@ -362,6 +437,9 @@ async Task RunBotAsync()
     // 插件加载不依赖连接，与连接并行
     await plugins.LoadAllAsync();
 
+    // 一次性把磁盘上残留的明文机密（插件设置里的 password 项）加密
+    plugins.EncryptExistingSecrets();
+
     await connectTask;
 
     var login = await client.GetLoginInfoAsync();
@@ -375,10 +453,9 @@ async Task RunBotAsync()
 
     // 保活：stdin 关闭/被重定向(EOF)时 Console.ReadLine() 立即返回 null，若直接退出会导致后台任务被中断
     while (Console.ReadLine() is not null) { }
-    await Task.Delay(Timeout.InfiniteTimeSpan);
 
-    await client.DisconnectAsync();
-    Console.WriteLine("[+] Closed.");
+    // 等退出信号（Ctrl+C / SIGTERM / 控制台关闭）→ 由下面主流程统一收尾
+    await shutdownTcs.Task;
 }
 
 // 给每行输出加时间戳（HH:mm:ss.fff）并写入环形缓冲（WebUI 用）

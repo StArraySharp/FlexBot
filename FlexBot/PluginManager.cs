@@ -870,6 +870,37 @@ sealed class PluginManager
         File.Move(temp, path, true);
     }
 
+    /// <summary>
+    /// 一次性迁移：把磁盘上仍是明文的机密设置（defs 里 type=password 的键）重新保存一遍，
+    /// 从而被 SecretBox 加密。开机调用一次；已是密文的键不会被二次加密。
+    /// </summary>
+    public void EncryptExistingSecrets()
+    {
+        try
+        {
+            if (!SecretBox.IsReady) return;
+            foreach (var dir in Directory.GetDirectories(PluginRoot))
+            {
+                var name = Path.GetFileName(dir);
+                if (name.StartsWith('.')) continue;
+                if (!IsSafePluginName(name)) continue;
+                if (!File.Exists(Path.Combine(dir, "settings.json"))) continue;
+
+                var defs = GetSettingDefs(name);
+                var secretKeys = defs.Where(d => string.Equals(d.Type, "password", StringComparison.OrdinalIgnoreCase))
+                                     .Select(d => d.Key).ToList();
+                if (secretKeys.Count == 0) continue;
+
+                var values = LoadPluginSettings(name);
+                var plain = secretKeys.Where(k => values.TryGetValue(k, out var v) && v.ValueKind == JsonValueKind.String
+                                                  && !SecretBox.IsEncrypted(v.GetString())).ToList();
+                if (plain.Count == 0) continue;
+                SavePluginSettings(name, values, defs);
+                Console.WriteLine($"[secret] 已加密 {name} 的机密设置项: {string.Join(", ", plain)}");
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[secret] 迁移明文机密失败: {ex.Message}"); }
+    }
     /// <summary>读取时把 enc:v1: 字符串解成明文（插件只应看到明文；非密文原样保留）</summary>
     private static Dictionary<string, JsonElement> DecryptSettings(Dictionary<string, JsonElement> src)
     {

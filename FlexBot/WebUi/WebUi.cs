@@ -42,7 +42,7 @@ static class WebUi
     private static readonly string SessionToken = Convert.ToHexString(Guid.NewGuid().ToByteArray())
         .ToLowerInvariant();
 
-    public static string Start(PluginManager plugins, HostSettings settings, IBotTransport client, ProcessManager procs)
+    public static string Start(PluginManager plugins, HostSettings settings, IBotTransport client, ProcessManager procs, Action? requestShutdown = null)
     {
         var port = GetPort(settings.WebUiPort);
         // WebUI 固定绑定全部网卡（0.0.0.0，公网可达），对外暴露请设置 WebUiPassword
@@ -411,6 +411,15 @@ static class WebUi
         {
             LogStore.Clear();
             return Results.Ok();
+        });
+
+        // 优雅停止宿主：卸载插件 → 断开通道 → 停随宿主拉起的依赖进程（先回响应再退出）
+        app.MapPost("/api/shutdown", () =>
+        {
+            if (requestShutdown is null) return Results.Json(new { ok = false, error = "当前宿主未启用该能力" });
+            Console.WriteLine("[webui] 收到停止宿主请求，开始优雅停机");
+            _ = Task.Run(async () => { await Task.Delay(300); try { requestShutdown(); } catch { } });
+            return Results.Json(new { ok = true, message = "宿主正在优雅退出：卸载插件 → 断开通道 → 停依赖进程" });
         });
 
         // ===================== 启动依赖 + 立即连接 =====================
