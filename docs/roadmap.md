@@ -61,6 +61,10 @@
 
 > 详细设计已单独成文（含 Mermaid 架构图/时序图/ER 图）：见 [memory-and-history-design.md](memory-and-history-design.md)。
 > 范围只覆盖**关注群**与**私聊**，不做全量收集。
+**待办选项（已确认要记，未实现）**
+
+- **会话 id + 关联/分离**：每个会话分配稳定短 id（`s_xxxxxx`），主人可用 `!session link/unlink` 把指定会话放进同一个「记忆组」以共享记忆、或分离恢复独占。
+  设计见 [memory-and-history-design.md §7.3](memory-and-history-design.md)（含防护：私聊关联进群默认禁止 + 显式确认 + 审计留痕 + WebUI 风险标记）
 
 群消息落 SQLite（**FTS5** 全文检索），解锁「谁说过 X」「每日群聊日报」「Agent 记忆关键词检索」。
 选 SQLite 的理由：零外部依赖、单文件可备份；且官方通道**没有历史消息接口**，自行落库是唯一解。
