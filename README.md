@@ -142,6 +142,7 @@ AI 功能来自 **Agent 插件**：WebUI → 插件 → Agent → 设置，填 `
 - [插件开发指南](docs/plugin-dev.md)：脚本插件与编译型插件、NuGet 依赖、插件工厂与生成审计
 - [插件 API 参考](docs/plugin-api.md)：`IBotPlugin` / `IBotContext` / `IBotApi` 契约、消息模型、Hub、内置服务、两条通道能力差异
 - [宿主 HTTP API](docs/http-api.md)：认证方式、全部端点与请求响应、静态资源热更新语义
+- [待办清单](TODO.md)：已完成基线与后续优化/数据层计划（每条带实测证据与验收方式）
 - [文档目录](docs/README.md)：5 分钟写出第一个插件 + 目录与清单约定
 
 ## 从源码构建
