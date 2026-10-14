@@ -13,7 +13,7 @@ namespace FlexBot;
 /// 名字按 exe 目录取哈希 ⇒ **不同目录的副本（如沙箱、另一份部署）互不影响**。
 /// 进程被强杀时操作系统会释放，不会留下"僵尸锁"。
 ///
-/// 需要故意多开（例如并行测试）时加 <c>--allow-multiple</c>。
+/// 没有绕过开关：同一份程序（按 exe 目录区分）永远只允许一个宿主。
 /// </summary>
 static class SingleInstance
 {

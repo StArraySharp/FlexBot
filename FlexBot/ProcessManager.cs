@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -14,49 +12,6 @@ sealed class ProcessManager
 {
     /// <summary>匹配 ANSI CSI 转义序列（颜色/光标控制等），用于写入日志文件前剥离</summary>
     private static readonly Regex AnsiRegex = new("\u001B\\[[0-9;]*[A-Za-z]", RegexOptions.Compiled);
-
-    static ProcessManager()
-    {
-        // UTF-8 已在 Program.cs 入口处（捕获 Console.Out 之前）设置；
-        // 此处再设置不影响已包装的 writer，这里只负责启用 ANSI 颜色
-        TryEnableWindowsAnsi();
-    }
-
-    /// <summary>Windows 传统 conhost 默认不解析 ANSI 转义，需开启 VT 处理；Linux/macOS 终端原生支持，直接跳过</summary>
-    private static void TryEnableWindowsAnsi()
-    {
-        // 跨平台守卫：非 Windows 不触碰任何 Win32 API
-        if (!OperatingSystem.IsWindows()) return;
-        try
-        {
-            var handle = WinConsole.GetStdHandle(WinConsole.StdOutputHandle);
-            if (WinConsole.GetConsoleMode(handle, out var mode))
-                SetConsoleModeSafe(handle, mode);
-        }
-        catch { }
-    }
-
-    // OperatingSystem.IsWindows() 守卫已保证以下调用仅在 Windows 执行
-    [SupportedOSPlatform("windows")]
-    private static void SetConsoleModeSafe(IntPtr handle, uint mode)
-        => WinConsole.SetConsoleMode(handle, mode);
-
-    /// <summary>kernel32 控制台 API（仅 Windows 可调用；由 TryEnableWindowsAnsi 的平台守卫保护）</summary>
-    [SupportedOSPlatform("windows")]
-    private static class WinConsole
-    {
-        public const int StdOutputHandle = -11;
-        public const uint EnableVirtualTerminalProcessing = 0x0004;
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern IntPtr GetStdHandle(int nStdHandle);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
-    }
 
     private readonly string _logDir;
     private Process? _napCatProcess;

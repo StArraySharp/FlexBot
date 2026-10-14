@@ -1,7 +1,5 @@
 using System.Text;
 
-// 从 Program.cs 拆出：入口改成显式 Main 后，同一文件里不能再混用 file-scoped 与 block namespace。
-
 namespace FlexBot
 {
     class TimestampWriter(TextWriter inner) : TextWriter
