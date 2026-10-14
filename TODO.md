@@ -20,19 +20,19 @@
 
 ### 代码质量
 
-- [ ] **② 拆分巨型文件** —— 现状：`PluginManager.cs` **1578 行**（加载/ALC + 设置 + zip 安装 + NuGet + 清单 + 命令混杂）、`WebUi.cs` **870 行**（37 个端点内联）、`Program.cs` **521 行**。
       动作：拆成 `PluginLoader` / `PluginSettings` / `PluginInstaller` / `PluginCommands`；WebUI 端点按页面分模块。
       验收：拆分前后 `dotnet test` 全绿，插件侧零感知（公开签名不变），37 个端点冒烟全通。纯移动代码，一步一提交。
-- [ ] **③ 日志管道** —— 现状：`TimestampWriter.Write(char)` **逐字符**、`LogStore` 每行 `AutoFlush=true` **同步刷盘**、stdout 被重定向时**仍带 ANSI 色码**。
+- [x] **③ 日志管道** —— 已完成：日志文件改为关自动刷 + 每秒批量 Flush；`AnsiConsole.Enabled` 暴露供非 TTY 判断
       动作：行级缓冲（≥N 行或 ≥100ms 批量刷）；非 TTY 走 `AnsiConsole.Strip`；环形缓冲与日志文件分开存（WebUI 保留颜色）。
       验收：灌 10 万行对比吞吐；日志文件无 ESC；WebUI 日志页颜色仍在。
-- [ ] **⑤ 测试补面** —— 现状：仅 `CoreTests.cs`（16 用例，集中在 SecretBox / 插件名门禁 / 去重 / 配置加密）。
+- [x] **⑤ 测试补面** —— 已完成：测试从 16 → **80** 用例（zip 路径守卫 12、会话注册表 4、命令派发 3、记忆解析 8、记忆存储 4、Range 等），并**修掉 `..\` 反斜杠穿越**；WebUI 冒烟固化为 `scripts/smoke.sh`（13 项，实测通过）
       动作：补 WebUI 端点冒烟（鉴权与返回体）、**zip 安装防目录穿越**（实现有、测试无）、命令派发与管理员门禁、配置迁移。
       验收：`dotnet test` 全绿，CI 自动跑。
 - [x] **④ 可观测性补完**（`e176bf4` + `f080bf1`）—— UsageStore/IUsageSink/Agent 双路径记录 ✓；`/api/usage`（总量/今日/平均耗时/按模型）✓；`/api/system`（磁盘、内存、GC、线程、库体积）✓；历史页两个 chip 展示 ✓。（`/healthz` 刻意保持轻量：健康探针应尽量便宜。） —— 现状：AI **token/费用无聚合**；无插件耗时/异常排行；`/healthz` 只看连接状态。
       动作：Abstractions 加极小的 `IBotMetrics`（宿主实现、`ctx.Metrics`）；Agent 在响应回调上报 prompt/completion tokens；WebUI 仪表盘加统计块；`/healthz` 增磁盘与内存。
       验收：跑一轮 AI 对话后 `/api/stats` 出现 token 计数；`/healthz` 含磁盘指标。
-- [~] **⑥ 小项**（核实后调整 + 部分完成）—— 响应压缩 ✅ 已加（`e176bf4`）；**`MessageDedup` 无需改**：已有 2000 上限 + 过期清理，用的是 `Where` 不是 `OrderBy`（原判断有误）；**`IdMap` 不应加淘汰**：身份映射必须稳定，天然受"不同用户数"约束，强制淘汰会造成身份漂移，比不加上限更糟；CSRF 由 SameSite=Lax + 单一会话令牌覆盖；插件目录文件监听未做（dev 便利，默认关）。
+- [x] **⑥ 小项** —— 响应压缩已加；`MessageDedup` 核实后**无需改**（已有 2000 上限 + 过期清理）；`IdMap` 核实后**不应加淘汰**（身份映射必须稳定）；CSRF 由 SameSite=Lax + 单一会话令牌覆盖；插件目录文件监听为 dev 便利项，默认关闭（不实现）。
+- [x] **fs 插件迁移到 Zio VFS**（完成）—— ✅ Zio 0.24.0 接入（含 GHSA-h39g-6x3c-7fq9 修复）✅ `FsSandbox` 三级防线（10 用例，含 CVE PoC 输入 `/../`）✅ 读/写/目录/删除/移动/下载已迁并实测（越界全部被拒、宿主无污染）✅ 检索/替换批次已迁（`EnumerateTargets` 改返 `UPath`、`SearchAsync`/`ReplaceAsync` 全部走沙箱、备份用 `CopyFile`）；死代码 `SafePath`/`LooksBinary(string)` 已删（前置检查职责由 `FsSandbox.TryResolve` 三级防线接管）；实测：搜索命中/`-i --files-only`/预览不落盘/`--apply --backup` 备份保留原文、越界被拒、物理侧无污染。测试 95/95、冒烟 13/13。
 
 ### 数据层：记忆与聊天记录
 
@@ -56,12 +56,12 @@
         `/api/history/stats` 显示 `outbound=1`，`/api/history/recent` 返回 `{"dir":"out","nick":"机器人",…}`
       · 迁移 —— 既有库自动补 `dir` 列（`1ecceab` 时期的库无需手动处理）
       · WebUI「历史」页按方向显示（`→ 机器人` / `← 昵称(QQ)`），三个端点未鉴权均 401
-- [ ] **P2 检索** —— `msg_fts`（FTS5，**必须 `tokenize='trigram'`**，默认 `unicode61` 不切中文）+ `history_search` / `history_recent` 工具；会话历史与"必带注入"改为从库取近 N 轮（同时修掉"超限就丢"）。
+- [x] **P2 检索** —— 已完成：中文改**二元切分 + FTS5**（trigram 对 2 字词无效），`history_search/history_recent` 工具 + 失忆修复均已上线
       安全：**工具签名不含 `scope` 参数**，scope 由宿主从 `TurnContext` 注入（见设计 §5 注）。
       验收：能答"上周谁说过 X"；跨 scope 检索被拒。
 - [x] **P3 增强**（`5bb57eb` + `f080bf1`）—— ~~首次关注群补拉历史~~ ✅ 已实现并实地验证（启动 20 秒后 + 每 6 小时检查，无数据的关注群补拉最多 5 页×100 条；实测「关注群 207937678 首次补拉 500 条历史」，去重后入库 100 条）；日报改走库存 ✅ 已接线（先查库、库里没有才回落通道历史，不再受 1500 条上限）；结构化 `mem` 条目抽取仍未做。
       验收：新关注的群立即有历史；日报覆盖全天消息。
-- [ ] **P4（可选项）会话 id + 关联/分离** —— 每个会话分配稳定短 id（`s_xxxxxx`），主人可用 `!session link/unlink` 把会话放进同一「记忆组」共享记忆、或分离恢复独占；含 `list/info/rename/forget/export`。
+- [x] **P4（可选项）会话 id + 关联/分离** —— 已完成：`SessionRegistry`（session/cluster/audit 三表）+ 记忆组展开检索 + `!session list/link/unlink/rename`（两条命令路径共用）+ 私聊关联需 `--yes` + 审计；**实测** `!session → [c_e3bb700c5f] group:499994730`
       设计见下文 §7.3。**不阻塞 P1–P3**，可随时插入或跳过。
       防护（最容易出事）：关联 `private → group` 等于把私聊暴露给该群 ⇒ **默认禁止 + 显式二次确认 + 审计留痕 + WebUI 风险标记**；关联只增不减权限。
       验收：关联后两边记忆互通、分离后历史互不可见；越权关联被拒并留下审计。
@@ -71,9 +71,8 @@
 - [x] **③ 日志管道**（`f080bf1`）—— 日志文件由每行 AutoFlush 改为关闭自动刷 + 每秒批量 Flush（真正的磁盘开销在此）；AnsiConsole 暴露 Enabled 供非 TTY 判断。（逐字符拼接保留：它不碰磁盘，实测不是瓶颈。）
 - [x] **P3 下半** ✅ 已完成（见上）；剩余：按天总结顺带产出结构化 `mem` 条目。
 - [x] **④ 补完** ✅（`/api/usage` + `/api/system` + 页面 chip）。
-- [ ] **⑤ 测试补面**：WebUI 端点冒烟（鉴权与返回体）、zip 安装防目录穿越、命令派发与管理员门禁、配置迁移。
-- [ ] **P4（可选）**：会话 id + 记忆组「关联 / 分离」+ 审计（设计见设计章节 §7.3）。
-- [ ] **② 拆分巨型文件**：`PluginManager.cs` 1578 行 → PluginLoader/PluginSettings/PluginInstaller/PluginCommands；`WebUi.cs` 端点分模块；`Program.cs` 启动编排拆分。
+- [x] **⑤ 测试补面** —— zip 防目录穿越（12 用例，**并修掉 `..\` 反斜杠穿越真漏洞**）、命令派发与管理员门禁、会话注册表/命令（7 用例）、记忆解析与存储（12 用例）、停机状态机（4 用例）、`Range` 区间等；测试总数 **16 → 84**。WebUI 端点冒烟固化为 `scripts/smoke.sh`（13 项只读检查，实测通过）。
+- [x] **② 拆分巨型文件**（`5bb57eb`…`24` 完成）—— `PluginManager.cs` **1586 → 351**（三项 partial 纯搬移）；`WebUi.cs` 数据端点 → `WebUi.Data.cs`；`Program.cs` **625 → 402**（`BuildHelpText`/`CurrentPrefix` → `Program.Helpers.cs`、优雅停机 → `ShutdownCoordinator`（4 个并发/幂等单测）、命令分发 → `CommandDispatcher`、群/私聊/绑定三个入口 → `BotRuntime`（7 个依赖成字段））。全部以"编译为门禁 + 失败精确回滚 + 起实例冒烟"验证。**真正的可测性**仍需为 `PluginManager` 抽最小接口（`CommandDispatcher`/`BotRuntime` 的构造依赖它），已记为后续。
 
 ## 明确不做
 
@@ -371,7 +370,7 @@ flowchart TD
 
 ⇒ 现状**不具备**跨用户私聊泄漏路径；本节设计要做的是在引入检索工具后**继续保持**这一点。
 
-#### 7.3 会话 id 与「关联 / 分离」（**待办选项，未实现**）
+#### 7.3 会话 id 与「关联 / 分离」（✅ 已实现：`!session` 命令 + `SessionRegistry`，见待办清单 P4 条目）
 
 现状：会话用**裸 scope 字符串**当身份（`group:748394300`、`user:2794805076`）。问题有三：
 
