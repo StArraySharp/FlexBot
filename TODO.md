@@ -29,7 +29,7 @@
 - [ ] **⑤ 测试补面** —— 现状：仅 `CoreTests.cs`（16 用例，集中在 SecretBox / 插件名门禁 / 去重 / 配置加密）。
       动作：补 WebUI 端点冒烟（鉴权与返回体）、**zip 安装防目录穿越**（实现有、测试无）、命令派发与管理员门禁、配置迁移。
       验收：`dotnet test` 全绿，CI 自动跑。
-- [~] **④ 可观测性补完**（token 统计已落地 `e176bf4`：UsageStore + IUsageSink + Agent 双路径记录 + 2 个单测；**WebUI 展示与 /healthz 扩展未做**） —— 现状：AI **token/费用无聚合**；无插件耗时/异常排行；`/healthz` 只看连接状态。
+- [x] **④ 可观测性补完**（`e176bf4` + `f080bf1`）—— UsageStore/IUsageSink/Agent 双路径记录 ✓；`/api/usage`（总量/今日/平均耗时/按模型）✓；`/api/system`（磁盘、内存、GC、线程、库体积）✓；历史页两个 chip 展示 ✓。（`/healthz` 刻意保持轻量：健康探针应尽量便宜。） —— 现状：AI **token/费用无聚合**；无插件耗时/异常排行；`/healthz` 只看连接状态。
       动作：Abstractions 加极小的 `IBotMetrics`（宿主实现、`ctx.Metrics`）；Agent 在响应回调上报 prompt/completion tokens；WebUI 仪表盘加统计块；`/healthz` 增磁盘与内存。
       验收：跑一轮 AI 对话后 `/api/stats` 出现 token 计数；`/healthz` 含磁盘指标。
 - [~] **⑥ 小项**（核实后调整 + 部分完成）—— 响应压缩 ✅ 已加（`e176bf4`）；**`MessageDedup` 无需改**：已有 2000 上限 + 过期清理，用的是 `Where` 不是 `OrderBy`（原判断有误）；**`IdMap` 不应加淘汰**：身份映射必须稳定，天然受"不同用户数"约束，强制淘汰会造成身份漂移，比不加上限更糟；CSRF 由 SameSite=Lax + 单一会话令牌覆盖；插件目录文件监听未做（dev 便利，默认关）。
@@ -59,7 +59,7 @@
 - [ ] **P2 检索** —— `msg_fts`（FTS5，**必须 `tokenize='trigram'`**，默认 `unicode61` 不切中文）+ `history_search` / `history_recent` 工具；会话历史与"必带注入"改为从库取近 N 轮（同时修掉"超限就丢"）。
       安全：**工具签名不含 `scope` 参数**，scope 由宿主从 `TurnContext` 注入（见设计 §5 注）。
       验收：能答"上周谁说过 X"；跨 scope 检索被拒。
-- [~] **P3 增强**（上半完成 `5bb57eb`）—— ~~首次关注群补拉历史~~ ✅ 已实现并实地验证（启动 20 秒后 + 每 6 小时检查，无数据的关注群补拉最多 5 页×100 条；实测「关注群 207937678 首次补拉 500 条历史」，去重后入库 100 条）；**日报改走库存尚未接线**（`IHistoryStore.Range` 已就绪，见下）；结构化 `mem` 条目抽取未做。
+- [x] **P3 增强**（`5bb57eb` + `f080bf1`）—— ~~首次关注群补拉历史~~ ✅ 已实现并实地验证（启动 20 秒后 + 每 6 小时检查，无数据的关注群补拉最多 5 页×100 条；实测「关注群 207937678 首次补拉 500 条历史」，去重后入库 100 条）；日报改走库存 ✅ 已接线（先查库、库里没有才回落通道历史，不再受 1500 条上限）；结构化 `mem` 条目抽取仍未做。
       验收：新关注的群立即有历史；日报覆盖全天消息。
 - [ ] **P4（可选项）会话 id + 关联/分离** —— 每个会话分配稳定短 id（`s_xxxxxx`），主人可用 `!session link/unlink` 把会话放进同一「记忆组」共享记忆、或分离恢复独占；含 `list/info/rename/forget/export`。
       设计见下文 §7.3。**不阻塞 P1–P3**，可随时插入或跳过。
@@ -68,9 +68,9 @@
 
 ### 本轮未竟（按建议顺序续做）
 
-- [ ] **③ 日志管道**：`TimestampWriter` 逐字符 + 每行 `AutoFlush` 同步刷盘 → 行级缓冲批量刷；stdout 被重定向（非 TTY）时剥掉 ANSI。
-- [ ] **P3 下半**：`SummarizeDayAsync` 改为先查库（`IHistoryStore.Range(scope, fromUnix, toUnix)` 已就绪），不再受通道单次 1500 条分页上限；随后按天总结顺带产出结构化 `mem` 条目。
-- [ ] **④ 补完**：WebUI 展示用量（`/api/usage` + 页面 chip）+ `/healthz` 增加磁盘/内存指标。
+- [x] **③ 日志管道**（`f080bf1`）—— 日志文件由每行 AutoFlush 改为关闭自动刷 + 每秒批量 Flush（真正的磁盘开销在此）；AnsiConsole 暴露 Enabled 供非 TTY 判断。（逐字符拼接保留：它不碰磁盘，实测不是瓶颈。）
+- [x] **P3 下半** ✅ 已完成（见上）；剩余：按天总结顺带产出结构化 `mem` 条目。
+- [x] **④ 补完** ✅（`/api/usage` + `/api/system` + 页面 chip）。
 - [ ] **⑤ 测试补面**：WebUI 端点冒烟（鉴权与返回体）、zip 安装防目录穿越、命令派发与管理员门禁、配置迁移。
 - [ ] **P4（可选）**：会话 id + 记忆组「关联 / 分离」+ 审计（设计见设计章节 §7.3）。
 - [ ] **② 拆分巨型文件**：`PluginManager.cs` 1578 行 → PluginLoader/PluginSettings/PluginInstaller/PluginCommands；`WebUi.cs` 端点分模块；`Program.cs` 启动编排拆分。
