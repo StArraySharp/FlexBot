@@ -21,6 +21,18 @@ static class PhotinoGui
     {
         try
         {
+            // WebView2 的硬性约束：**不同程序不能共用同一个用户数据目录（UDF）**，
+            // 并发访问会导致环境创建失败（窗口纯黑或初始化卡死）。
+            // Photino 的默认 UDF 是 %LOCALAPPDATA%\Photino —— 同一台机器上跑第二个 Photino 程序就会互抢，
+            // 实测现象就是"FlexBot 一开，另一个 Photino 应用黑屏/崩溃；关掉就好"。
+            // 官方给的开关是环境变量 WEBVIEW2_USER_DATA_FOLDER，必须在创建窗口之前设置。
+            var udf = Path.Combine(AppContext.BaseDirectory, "memory", "webview2");
+            try
+            {
+                Directory.CreateDirectory(udf);
+                Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", udf);
+            }
+            catch { }
             var window = new PhotinoWindow()
                 .SetTitle("FlexBot 控制台")
                 .SetUseOsDefaultSize(false)
