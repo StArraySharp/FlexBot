@@ -48,7 +48,10 @@ public class MessageStoreTests : IDisposable
         Assert.Equal(0, stats.Group);
 
         var recent = reopened.Recent("private:1001", 10);
-        Assert.Single(recent);
+        var row = Assert.Single(recent);
+        Assert.Equal("你好", row.Text);          // 具名类型才能这样断言（旧实现是匿名类型）
+        Assert.Equal("in", row.Dir);
+        Assert.Equal(1001, row.UserId);
     }
 
     [Fact]

@@ -264,10 +264,16 @@ sealed class MessageStore : IDisposable
         return (total, group, priv, inbound, outbound, _queue.Count, DbBytes(), Fmt(oldest), Fmt(newest));
     }
 
+    /// <summary>
+    /// 一行历史消息。**必须用具名类型**：早先返回 List&lt;object&gt; 装匿名类型，
+    /// System.Text.Json 按声明类型 object 序列化，每个元素会变成 {}（前端因此显示空白）。
+    /// </summary>
+    public sealed record HistoryRow(string Ts, string Dir, long UserId, string Nick, string Text, bool Recalled);
+
     /// <summary>某个 scope 的最近若干条（时间正序返回）</summary>
-    public List<object> Recent(string scope, int limit)
+    public List<HistoryRow> Recent(string scope, int limit)
     {
-        var list = new List<object>();
+        var list = new List<HistoryRow>();
         try
         {
             using var conn = Open();
@@ -281,15 +287,9 @@ sealed class MessageStore : IDisposable
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
-                list.Add(new
-                {
-                    ts = DateTimeOffset.FromUnixTimeSeconds(r.GetInt64(0)).ToLocalTime().ToString("MM-dd HH:mm:ss"),
-                    dir = r.GetString(1),
-                    userId = r.GetInt64(2),
-                    nick = r.GetString(3),
-                    text = r.GetString(4),
-                    recalled = r.GetInt64(5) != 0,
-                });
+                list.Add(new HistoryRow(
+                    DateTimeOffset.FromUnixTimeSeconds(r.GetInt64(0)).ToLocalTime().ToString("MM-dd HH:mm:ss"),
+                    r.GetString(1), r.GetInt64(2), r.GetString(3), r.GetString(4), r.GetInt64(5) != 0));
             }
         }
         catch (Exception ex) { Console.WriteLine($"[history] 读取最近消息失败: {ex.Message}"); }

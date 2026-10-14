@@ -26,7 +26,7 @@ async function loadHistoryStats() {
     $('histPrivate').textContent = '私聊 ' + d.privateMsgs + ' · 保留 ' + d.privateKeepDays + ' 天';
     $('histBytes').textContent = fmtBytes(d.bytes);
     $('histRange').textContent = d.oldest + ' ~ ' + d.newest;
-  } catch { }
+  } catch (e) { box.textContent = '读取异常：' + e; }
 }
 async function loadHistoryScopes() {
   const sel = $('histScope');
@@ -49,7 +49,10 @@ async function loadHistoryRecent() {
   box.innerHTML = '';
   if (!scope) { box.textContent = '暂无可显示的消息（只存关注群与私聊）'; return; }
   try {
-    const list = await (await fetch('/api/history/recent?scope=' + encodeURIComponent(scope) + '&limit=100')).json();
+    const res = await fetch('/api/history/recent?scope=' + encodeURIComponent(scope) + '&limit=100');
+    if (!res.ok) { box.textContent = '读取失败：HTTP ' + res.status; return; }
+    const list = await res.json();
+    if (!Array.isArray(list)) { box.textContent = '返回格式异常（不是数组）'; return; }
     if (!list.length) { box.textContent = '该会话暂无消息'; return; }
     for (const m of list) {
       const row = document.createElement('div');
