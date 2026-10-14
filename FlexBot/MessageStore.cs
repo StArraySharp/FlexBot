@@ -5,11 +5,15 @@ namespace FlexBot;
 
 /// <summary>
 /// 消息落库（TODO 数据层 P1）：**只存「关注群」与「私聊」**，未关注群一律不落库。
+/// 双向都存：`dir='in'` 是别人说的、`dir='out'` 是机器人自己发的 —— 只看一半就没法回答
+/// "机器人当时到底回了什么"。
 ///
-/// 三个要点：
+/// 四个要点：
 ///   · 写入走内存队列 + 后台批量事务 —— 每条消息都 fsync 是性能陷阱（日志管线那轮已踩过）
-///   · 去重靠 UNIQUE(transport, scope, message_id, ts) + INSERT OR IGNORE，
+///   · 去重靠 UNIQUE(transport, scope, message_id, ts) + INSERT OR IGNORE；
 ///     特意带上 ts：onebot 的 message_id 是 int32，机器人重启后可能重复
+///   · 出站消息发起时还不知道真实 message_id（要等通道返回），用负的自增序号占位，
+///     既避免"同一秒发多条"被唯一键吞掉，也不至于和真实 id 冲突
 ///   · 保留期到期清理（群 90 天 / 私聊 180 天），沿用 LogHousekeeping 那套"启动一次 + 周期一次"的模式
 ///
 /// 检索（FTS5）与长期记忆表属于 P2，本类先只提供落库、统计与最近若干条（供 WebUI 只读页）。
@@ -30,6 +34,7 @@ sealed class MessageStore : IDisposable
     private readonly ConcurrentQueue<Row> _queue = new();
     private readonly CancellationTokenSource _cts = new();
     private Task? _flushLoop;
+    private long _syntheticId;                 // 出站消息的真实 id 未知时的占位（负数，避免与真实 id 冲突）
 
     private DateTime _watchedMtime = DateTime.MinValue;
     private HashSet<long> _watched = [];
@@ -45,7 +50,7 @@ sealed class MessageStore : IDisposable
     }
 
     private readonly record struct Row(
-        string Transport, string Scope, long MessageId, long Timestamp,
+        string Transport, string Scope, string Dir, long MessageId, long Timestamp,
         long UserId, string Nick, string Text, string Raw);
 
     private const string Schema = """
@@ -53,6 +58,7 @@ sealed class MessageStore : IDisposable
           id INTEGER PRIMARY KEY,
           transport  TEXT    NOT NULL,
           scope      TEXT    NOT NULL,
+          dir        TEXT    NOT NULL DEFAULT 'in',
           message_id INTEGER NOT NULL,
           ts         INTEGER NOT NULL,
           user_id    INTEGER NOT NULL,
@@ -80,9 +86,20 @@ sealed class MessageStore : IDisposable
         var dir = Path.GetDirectoryName(_dbPath);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         using var conn = Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = Schema;
-        cmd.ExecuteNonQuery();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = Schema;
+            cmd.ExecuteNonQuery();
+        }
+        // 迁移：P1 早先的库没有 dir 列（那时只记入站）
+        try
+        {
+            using var migrate = conn.CreateCommand();
+            migrate.CommandText = "ALTER TABLE msg ADD COLUMN dir TEXT NOT NULL DEFAULT 'in'";
+            migrate.ExecuteNonQuery();
+            Console.WriteLine("[history] 已为既有消息库补上 dir 列（历史数据视为入站）");
+        }
+        catch { /* 列已存在 */ }
     }
 
     // ---------------- 策略：只存关注群 + 私聊 ----------------
@@ -117,13 +134,31 @@ sealed class MessageStore : IDisposable
 
     // ---------------- 写入：入队 + 后台批量事务 ----------------
 
-    /// <summary>落库入口（不阻塞调用方）；不符合策略的直接丢弃</summary>
-    public void Record(string transport, string scope, long messageId, long ts, long userId,
-                       string nick, string text, string? raw)
+    /// <summary>入站消息落库（不阻塞调用方）；不符合策略的直接丢弃</summary>
+    public void RecordIn(string transport, string scope, long messageId, long ts, long userId,
+                         string nick, string text, string? raw)
+        => Enqueue(new Row(transport, scope, "in", messageId, ts, userId, nick, text ?? "", raw ?? ""));
+
+    /// <summary>
+    /// 出站消息落库（机器人在群里/私聊里说的话）。发起时拿不到真实 message_id，
+    /// 用负数占位序号保证唯一性；因此这里记的是**发起动作**，不保证通道一定送达。
+    /// </summary>
+    public void RecordOut(string scope, long ts, string text)
+        => Enqueue(new Row(Transport, scope, "out", -Interlocked.Increment(ref _syntheticId), ts,
+                           botId, "机器人", text ?? "", ""));
+
+    private long botId;
+    /// <summary>机器人自身 QQ 号（用于 out 行的 user_id；通道连上后由 Program 设置）</summary>
+    public long BotId { get => botId; set => botId = value; }
+
+    /// <summary>当前通道名（onebot / official），由 Program 设置</summary>
+    public string Transport { get; set; } = "onebot";
+
+    private void Enqueue(Row row)
     {
         if (_queue.Count >= QueueSoftLimit) return;      // 极端情况丢新消息，也不让内存无限涨
-        if (!ShouldStore(scope)) return;
-        _queue.Enqueue(new Row(transport, scope, messageId, ts, userId, nick, text ?? "", raw ?? ""));
+        if (!ShouldStore(row.Scope)) return;
+        _queue.Enqueue(row);
     }
 
     private async Task FlushLoopAsync()
@@ -154,11 +189,12 @@ sealed class MessageStore : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            INSERT OR IGNORE INTO msg(transport, scope, message_id, ts, user_id, nick, text, raw_json)
-            VALUES($t, $s, $m, $ts, $u, $n, $x, $r)
+            INSERT OR IGNORE INTO msg(transport, scope, dir, message_id, ts, user_id, nick, text, raw_json)
+            VALUES($t, $s, $d, $m, $ts, $u, $n, $x, $r)
             """;
         var pt = cmd.Parameters.Add("$t", SqliteType.Text);
         var ps = cmd.Parameters.Add("$s", SqliteType.Text);
+        var pd = cmd.Parameters.Add("$d", SqliteType.Text);
         var pm = cmd.Parameters.Add("$m", SqliteType.Integer);
         var pts = cmd.Parameters.Add("$ts", SqliteType.Integer);
         var pu = cmd.Parameters.Add("$u", SqliteType.Integer);
@@ -168,8 +204,8 @@ sealed class MessageStore : IDisposable
         var inserted = 0;
         foreach (var row in batch)
         {
-            pt.Value = row.Transport; ps.Value = row.Scope; pm.Value = row.MessageId; pts.Value = row.Timestamp;
-            pu.Value = row.UserId; pn.Value = row.Nick; px.Value = row.Text; pr.Value = row.Raw;
+            pt.Value = row.Transport; ps.Value = row.Scope; pd.Value = row.Dir; pm.Value = row.MessageId;
+            pts.Value = row.Timestamp; pu.Value = row.UserId; pn.Value = row.Nick; px.Value = row.Text; pr.Value = row.Raw;
             inserted += cmd.ExecuteNonQuery();
         }
         tx.Commit();
@@ -193,10 +229,10 @@ sealed class MessageStore : IDisposable
         catch { return 0; }
     }
 
-    /// <summary>总条数（含未落盘的队列长度）、按类型分组的条数、时间范围、库体积</summary>
-    public (long Total, long Group, long Private, long Queued, long Bytes, string Oldest, string Newest) Stats()
+    /// <summary>总条数（含未落盘的队列长度）、按类型与方向分组、时间范围、库体积</summary>
+    public (long Total, long Group, long Private, long In, long Out, long Queued, long Bytes, string Oldest, string Newest) Stats()
     {
-        long total = 0, group = 0, priv = 0, oldest = 0, newest = 0;
+        long total = 0, group = 0, priv = 0, inbound = 0, outbound = 0, oldest = 0, newest = 0;
         try
         {
             using var conn = Open();
@@ -205,6 +241,7 @@ sealed class MessageStore : IDisposable
                 SELECT COUNT(*),
                        SUM(CASE WHEN scope LIKE 'group:%'   THEN 1 ELSE 0 END),
                        SUM(CASE WHEN scope LIKE 'private:%' THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN dir = 'out' THEN 1 ELSE 0 END),
                        MIN(ts), MAX(ts)
                 FROM msg
                 """;
@@ -214,15 +251,17 @@ sealed class MessageStore : IDisposable
                 total = r.IsDBNull(0) ? 0 : r.GetInt64(0);
                 group = r.IsDBNull(1) ? 0 : r.GetInt64(1);
                 priv = r.IsDBNull(2) ? 0 : r.GetInt64(2);
-                oldest = r.IsDBNull(3) ? 0 : r.GetInt64(3);
-                newest = r.IsDBNull(4) ? 0 : r.GetInt64(4);
+                outbound = r.IsDBNull(3) ? 0 : r.GetInt64(3);
+                inbound = total - outbound;
+                oldest = r.IsDBNull(4) ? 0 : r.GetInt64(4);
+                newest = r.IsDBNull(5) ? 0 : r.GetInt64(5);
             }
         }
         catch (Exception ex) { Console.WriteLine($"[history] 统计失败: {ex.Message}"); }
 
         static string Fmt(long unix) => unix <= 0 ? "—"
             : DateTimeOffset.FromUnixTimeSeconds(unix).ToLocalTime().ToString("yyyy-MM-dd HH:mm");
-        return (total, group, priv, _queue.Count, DbBytes(), Fmt(oldest), Fmt(newest));
+        return (total, group, priv, inbound, outbound, _queue.Count, DbBytes(), Fmt(oldest), Fmt(newest));
     }
 
     /// <summary>某个 scope 的最近若干条（时间正序返回）</summary>
@@ -234,7 +273,7 @@ sealed class MessageStore : IDisposable
             using var conn = Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                SELECT ts, user_id, nick, text, recalled FROM msg
+                SELECT ts, dir, user_id, nick, text, recalled FROM msg
                 WHERE scope = $s ORDER BY ts DESC, id DESC LIMIT $n
                 """;
             cmd.Parameters.AddWithValue("$s", scope);
@@ -245,10 +284,11 @@ sealed class MessageStore : IDisposable
                 list.Add(new
                 {
                     ts = DateTimeOffset.FromUnixTimeSeconds(r.GetInt64(0)).ToLocalTime().ToString("MM-dd HH:mm:ss"),
-                    userId = r.GetInt64(1),
-                    nick = r.GetString(2),
-                    text = r.GetString(3),
-                    recalled = r.GetInt64(4) != 0,
+                    dir = r.GetString(1),
+                    userId = r.GetInt64(2),
+                    nick = r.GetString(3),
+                    text = r.GetString(4),
+                    recalled = r.GetInt64(5) != 0,
                 });
             }
         }
@@ -292,9 +332,9 @@ sealed class MessageStore : IDisposable
             removed = cmd.ExecuteNonQuery();
             if (removed > 0)
             {
-                using var vacuum = conn.CreateCommand();
-                vacuum.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
-                vacuum.ExecuteNonQuery();
+                using var checkpoint = conn.CreateCommand();
+                checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                checkpoint.ExecuteNonQuery();
                 Console.WriteLine($"[history] 保留期清理删除 {removed} 条（群 {GroupKeepDays} 天 / 私聊 {PrivateKeepDays} 天）");
             }
         }

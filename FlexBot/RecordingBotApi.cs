@@ -17,8 +17,26 @@ sealed class RecordingBotApi(IBotApi inner) : IBotApi
 {
     public long SelfId => inner.SelfId;
 
+    /// <summary>
+    /// 出站消息落库（机器人在群里/私聊里说的话）。只记**发起动作**：真实 message_id 要等通道返回，
+    /// 这里用占位 id；失败与否不影响记录（排查"它到底发没发"时，尝试本身也是信息）。
+    /// </summary>
+    private static void RecordOutbound(string kind, long targetId, string text)
+    {
+        var store = MessageStore.Current;
+        if (store is null) return;
+        try
+        {
+            var scope = kind == "group" ? $"group:{targetId}" : $"private:{targetId}";
+            store.RecordOut(scope, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), text);
+        }
+        catch { }
+    }
+
+
     public Task<ApiResult<long>> SendPrivateMsgAsync(long userId, object message)
     {
+        RecordOutbound("private", userId, BotHelpers.MsgToText(message));
         Stats.Recent.Add("out", "private", userId, BotHelpers.MsgToText(message));
         Stats.IncOut();
         return inner.SendPrivateMsgAsync(userId, message);
@@ -26,6 +44,7 @@ sealed class RecordingBotApi(IBotApi inner) : IBotApi
 
     public Task<ApiResult<long>> SendGroupMsgAsync(long groupId, object message)
     {
+        RecordOutbound("group", groupId, BotHelpers.MsgToText(message));
         Stats.Recent.Add("out", "group", groupId, BotHelpers.MsgToText(message));
         Stats.IncOut();
         return inner.SendGroupMsgAsync(groupId, message);
@@ -33,6 +52,7 @@ sealed class RecordingBotApi(IBotApi inner) : IBotApi
 
     public Task<ApiResult<long>> SendGroupForwardMsgAsync(long groupId, List<ForwardNode> messages)
     {
+        RecordOutbound("group", groupId, $"[合并转发 {messages.Count} 条]");
         Stats.Recent.Add("out", "group", groupId, $"[合并转发 {messages.Count} 条]");
         Stats.IncOut();
         return inner.SendGroupForwardMsgAsync(groupId, messages);
@@ -40,6 +60,7 @@ sealed class RecordingBotApi(IBotApi inner) : IBotApi
 
     public Task<ApiResult<long>> SendPrivateForwardMsgAsync(long userId, List<ForwardNode> messages)
     {
+        RecordOutbound("private", userId, $"[合并转发 {messages.Count} 条]");
         Stats.Recent.Add("out", "private", userId, $"[合并转发 {messages.Count} 条]");
         Stats.IncOut();
         return inner.SendPrivateForwardMsgAsync(userId, messages);

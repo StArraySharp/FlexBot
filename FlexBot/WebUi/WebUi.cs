@@ -285,13 +285,15 @@ static class WebUi
         {
             var s = MessageStore.Current;
             if (s is null) return Results.Json(new { enabled = false });
-            var (total, group, priv, queued, bytes, oldest, newest) = s.Stats();
+            var (total, group, priv, inbound, outbound, queued, bytes, oldest, newest) = s.Stats();
             return Results.Json(new
             {
                 enabled = true,
                 total,
                 group,
                 privateMsgs = priv,
+                inbound,
+                outbound,
                 queued,
                 bytes,
                 oldest,

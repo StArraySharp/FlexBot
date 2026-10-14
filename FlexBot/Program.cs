@@ -72,6 +72,7 @@ internal static class Program
         // 消息落库（数据层 P1）：只存关注群与私聊。建库后先做一次保留期清理，之后每 6 小时一次。
         var msgStore = new MessageStore(Path.Combine(settings.MemoryDir, "flexbot.db"),
                                         Path.Combine(settings.MemoryDir, "watched_groups.txt"));
+        msgStore.Transport = client.TransportName;   // 出站记录用真实通道名
         msgStore.Purge();
         _ = Task.Run(async () =>
         {
@@ -200,9 +201,11 @@ internal static class Program
             // 落库：只存关注群与私聊，未关注群直接丢弃。放在去重之后、任何分支之前 ——
             // 存储不能依赖命令匹配或管理员判断，否则命令消息与非管理员私聊会漏记。
             var sm = e.Message;
+            // 机器人自己消息的回显：出站路径已记为 dir=out ⇒ 这里跳过，避免重复
+            if (sm.SelfId != 0 && sm.UserId == sm.SelfId) return;
             var smScope = msgStore.ScopeFor(sm.GroupId, sm.UserId ?? 0);
             if (smScope is not null)
-                msgStore.Record(client.TransportName, smScope, sm.MessageId,
+                msgStore.RecordIn(client.TransportName, smScope, sm.MessageId,
                     sm.Time > 0 ? sm.Time : DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                     sm.UserId ?? 0, sm.SenderName, sm.PlainText, System.Text.Json.JsonSerializer.Serialize(sm));
 
@@ -326,9 +329,11 @@ internal static class Program
             // 落库：只存关注群与私聊，未关注群直接丢弃。放在去重之后、任何分支之前 ——
             // 存储不能依赖命令匹配或管理员判断，否则命令消息与非管理员私聊会漏记。
             var sm = e.Message;
+            // 机器人自己消息的回显：出站路径已记为 dir=out ⇒ 这里跳过，避免重复
+            if (sm.SelfId != 0 && sm.UserId == sm.SelfId) return;
             var smScope = msgStore.ScopeFor(sm.GroupId, sm.UserId ?? 0);
             if (smScope is not null)
-                msgStore.Record(client.TransportName, smScope, sm.MessageId,
+                msgStore.RecordIn(client.TransportName, smScope, sm.MessageId,
                     sm.Time > 0 ? sm.Time : DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                     sm.UserId ?? 0, sm.SenderName, sm.PlainText, System.Text.Json.JsonSerializer.Serialize(sm));
 

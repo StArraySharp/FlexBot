@@ -55,8 +55,8 @@ async function loadHistoryRecent() {
       const row = document.createElement('div');
       row.style.borderBottom = '1px solid rgba(128,128,128,.18)';
       row.style.padding = '2px 0';
-      row.textContent = `${m.ts}  ${m.nick}(${m.userId})  ${m.recalled ? '[已撤回] ' : ''}${m.text}`;
-      box.appendChild(row);
+      const who = m.dir === 'out' ? '→ 机器人' : '← ' + m.nick + '(' + m.userId + ')';
+      row.textContent = `${m.ts}  ${who}  ${m.recalled ? '[已撤回] ' : ''}${m.text}`;
     }
     box.scrollTop = box.scrollHeight;
   } catch { }

@@ -38,7 +38,7 @@ public class MessageStoreTests : IDisposable
             Assert.Equal("private:1001", store.ScopeFor(null, 1001));
             Assert.True(store.ShouldStore("private:1001"));
 
-            store.Record("onebot", "private:1001", messageId: 55, ts: Now, userId: 1001, nick: "甲", text: "你好", raw: "{}");
+            store.RecordIn("onebot", "private:1001", messageId: 55, ts: Now, userId: 1001, nick: "甲", text: "你好", raw: "{}");
         }
 
         using var reopened = new MessageStore(_db, _watched);
@@ -58,12 +58,12 @@ public class MessageStoreTests : IDisposable
         using var store = new MessageStore(_db, _watched);
 
         Assert.False(store.ShouldStore("group:748394300"));
-        store.Record("onebot", "group:748394300", 1, Now, 7, "甲", "不想被存", null);
+        store.RecordIn("onebot", "group:748394300", 1, Now, 7, "甲", "不想被存", null);
 
         Watch(748394300);                       // 加进关注名单（按 mtime 重新读取）
         File.SetLastWriteTimeUtc(_watched, DateTime.UtcNow.AddSeconds(2));
         Assert.True(store.ShouldStore("group:748394300"));
-        store.Record("onebot", "group:748394300", 2, Now, 7, "甲", "现在要存", null);
+        store.RecordIn("onebot", "group:748394300", 2, Now, 7, "甲", "现在要存", null);
 
         Thread.Sleep(700);                      // 等后台批量写入
         var stats = store.Stats();
@@ -76,7 +76,7 @@ public class MessageStoreTests : IDisposable
     {
         using var store = new MessageStore(_db, _watched);
         for (var i = 0; i < 5; i++)
-            store.Record("onebot", "private:2002", messageId: 99, ts: 1_700_000_000, userId: 2002, nick: "乙", text: "重复", null);
+            store.RecordIn("onebot", "private:2002", messageId: 99, ts: 1_700_000_000, userId: 2002, nick: "乙", text: "重复", null);
 
         Thread.Sleep(700);
         Assert.Equal(1, store.Stats().Total);
@@ -90,8 +90,8 @@ public class MessageStoreTests : IDisposable
             var old = Now - (MessageStore.GroupKeepDays + 5) * 86400L;      // 群 90 天
             var fresh = Now - 86400;
             Watch(111);
-            store.Record("onebot", "group:111", 1, old, 7, "甲", "过期", null);
-            store.Record("onebot", "group:111", 2, fresh, 7, "甲", "还新鲜", null);
+            store.RecordIn("onebot", "group:111", 1, old, 7, "甲", "过期", null);
+            store.RecordIn("onebot", "group:111", 2, fresh, 7, "甲", "还新鲜", null);
         }
 
         using var reopened = new MessageStore(_db, _watched);
@@ -105,7 +105,7 @@ public class MessageStoreTests : IDisposable
     {
         using var store = new MessageStore(_db, _watched);
         for (var i = 0; i < 50; i++)
-            store.Record("official", "private:3003", i + 1, Now - 50 + i, 3003, "丙", "文本" + i, null);
+            store.RecordIn("official", "private:3003", i + 1, Now - 50 + i, 3003, "丙", "文本" + i, null);
 
         Thread.Sleep(700);
         var stats = store.Stats();
