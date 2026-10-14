@@ -50,6 +50,8 @@ class AgentService
     // 会话上下文（真正的 user/assistant 消息轮次结构，超限按轮次截断）
     private readonly ConcurrentDictionary<string, List<MCAIChatMessage>> _convHist = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _convLocks = new(StringComparer.OrdinalIgnoreCase);
+    // 会话重置频控：key → 上次重置时间（防止模型反复清空上下文导致前言不搭后语）
+    private readonly ConcurrentDictionary<string, DateTime> _lastReset = new(StringComparer.OrdinalIgnoreCase);
 
     // 记忆文件缓存：key → (最后修改时间, 最近一段摘要)，避免每次 @ 都读整个文件
     private readonly ConcurrentDictionary<string, (DateTime Mtime, string? Summary)> _memCache = new(StringComparer.OrdinalIgnoreCase);
@@ -169,6 +171,33 @@ class AgentService
         };
         var path = candidates.FirstOrDefault(File.Exists);
         return path is null ? "" : File.ReadAllText(path);
+    }
+
+    /// <summary>
+    /// 重置某个会话的**短期上下文**（只忘细节）：长期记忆摘要、历史库消息一律不动。
+    /// scope 形如 group:123456 / user:123456；宿主在命令分发前会把当前会话补进参数。
+    /// </summary>
+    public string ResetSession(string scope)
+    {
+        var s = (scope ?? "").Trim();
+        if (s.Length == 0) return "用法: reset [group:<群号>|user:<QQ>]（不带参数时宿主会自动填当前会话）";
+        string? key = null;
+        if (s.StartsWith("group:", StringComparison.OrdinalIgnoreCase) && long.TryParse(s[6..].Trim(), out var gid) && gid > 0) key = "group" + gid;
+        else if (s.StartsWith("user:", StringComparison.OrdinalIgnoreCase) && long.TryParse(s[5..].Trim(), out var uin) && uin > 0) key = "user" + uin;
+        if (key is null) return $"无法解析会话「{scope}」（应形如 group:123456 或 user:123456）";
+
+        var now = DateTime.UtcNow;
+        if (_lastReset.TryGetValue(key, out var last) && now - last < TimeSpan.FromSeconds(60))
+            return "刚刚重置过，请稍后再试（避免反复清空上下文导致答话前后矛盾）。";
+        _lastReset[key] = now;
+
+        var cleared = 0;
+        if (_convHist.TryGetValue(key, out var hist))
+        {
+            lock (hist) { cleared = hist.Count; hist.Clear(); }
+        }
+        Console.WriteLine($"[ai] 会话重置 {key}：清掉 {cleared} 条短期上下文（长期记忆与历史库不动）");
+        return $"已重置本会话的短期上下文（清掉 {cleared} 条）。长期记忆与历史消息都保留了 —— 需要时我可以从历史库把之前的对话补回来。";
     }
 
     public async Task<string> AskAgentAsync(string prompt, long callerUin, string callerName, long groupId = 0, string extraContext = "", List<AIContent>? imageParts = null)

@@ -25,4 +25,6 @@ public interface IHistoryStore
 
     /// <summary>在某会话内按关键词检索（中文按二元切分，2 字词也能命中）</summary>
     IReadOnlyList<HistoryMessage> Search(string scope, string query, int limit = 10);
+    /// <summary>某会话在 [fromUnix, toUnix) 区间内的消息（时间正序），用于"按天总结"这类场景</summary>
+    IReadOnlyList<HistoryMessage> Range(string scope, long fromUnix, long toUnix, int limit = 2000);
 }

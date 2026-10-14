@@ -79,6 +79,9 @@ class BotTools(IBotContext ctx)
         return list.Count == 0 ? "当前会话没有历史消息。" : FmtHistory(list);
     }
 
+    [Description("重置当前会话的短期上下文（只忘细节，不动长期记忆与历史消息）。")]
+    private async Task<string> ResetSession()
+        => await ctx.TryInvokeCommandAsync("reset", CurrentScope()) ?? "重置不可用（Agent 插件未注册 reset 命令）。";
     [Description("在当前会话的历史消息里按关键词检索。中文两字词也可（如 基金、投资）。仅限当前会话。")]
     private string RecallSearch([Description("关键词")] string query, [Description("最多返回几条，默认 10")] int limit = 10)
     {
@@ -98,6 +101,7 @@ class BotTools(IBotContext ctx)
             AIFunctionFactory.Create(GetCurrentGroup, name: "get_current_group", description: "获取当前对话所在群号"),
             AIFunctionFactory.Create(RecallRecent, name: "history_recent", description: "查看当前会话最近的历史消息（来自宿主消息库，能跨机器人重启；用户问\"之前聊过什么/我发过什么\"时用它）"),
             AIFunctionFactory.Create(RecallSearch, name: "history_search", description: "在当前会话的历史消息里按关键词检索（中文两字词也可，例如 基金/投资）"),
+            AIFunctionFactory.Create(ResetSession, name: "session_reset", description: "重置当前会话的短期上下文（忘掉刚才的细节）。**长期记忆与历史消息不受影响**；话题彻底换了、或上下文里塞进了无关内容时用。"),
             AIFunctionFactory.Create(GetGroupMembers, name: "get_group_members", description: "获取当前群成员列表"),
             AIFunctionFactory.Create(FindMemberByName, name: "find_member", description: "按昵称/群名片查找当前群成员（不区分大小写）"),
             AIFunctionFactory.Create(SaveMemory, name: "save_memory", description: "保存长期记忆到本地 Markdown 文件"),

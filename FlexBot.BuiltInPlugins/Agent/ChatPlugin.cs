@@ -87,6 +87,11 @@ public sealed class ChatPlugin : IBotPlugin
             },
             "summary <群号>"));
 
+        // 会话重置：只丢短期上下文，不清长期记忆（宿主在分发前会把当前会话补进参数）
+        _commandSubs.Add(context.RegisterCommand(
+            "reset", "重置当前会话的短期上下文（长期记忆与历史消息保留）",
+            args => Task.FromResult(_agent.ResetSession(args)),
+            "reset [group:<群号>|user:<QQ>]"));
         // 消息撤回 → 中止对该消息的回复（停止发送后续分段）
         _subs.Add(context.Events.On<GroupRecallEventArgs>(e => CancelByRecall(e.MessageId, $"group {e.GroupId}"), tag: Name));
         _subs.Add(context.Events.On<FriendRecallEventArgs>(e => CancelByRecall(e.MessageId, $"friend {e.UserId}"), tag: Name));

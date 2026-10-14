@@ -307,6 +307,19 @@ sealed class MessageStore : IDisposable
         return list;
     }
 
+    /// <summary>该 scope 是否已有数据（用于"首次关注补拉历史"判断）</summary>
+    public bool HasScope(string scope)
+    {
+        try
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT EXISTS(SELECT 1 FROM msg WHERE scope = $s LIMIT 1)";
+            cmd.Parameters.AddWithValue("$s", scope);
+            return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L) != 0;
+        }
+        catch { return false; }
+    }
     /// <summary>已知 scope 列表（消息库里出现过的）</summary>
     public List<(string Scope, long Count, long Last)> Scopes()
     {
@@ -426,6 +439,34 @@ sealed class MessageStore : IDisposable
         return list;
     }
 
+    /// <summary>某 scope 在 [fromUnix, toUnix) 区间内的消息（时间正序，上限保护）</summary>
+    public List<HistoryRow> Range(string scope, long fromUnix, long toUnix, int limit = 2000)
+    {
+        var list = new List<HistoryRow>();
+        try
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT ts, dir, user_id, nick, text, recalled FROM msg
+                WHERE scope = $s AND ts >= $f AND ts < $t
+                ORDER BY ts ASC, id ASC LIMIT $n
+                """;
+            cmd.Parameters.AddWithValue("$s", scope);
+            cmd.Parameters.AddWithValue("$f", fromUnix);
+            cmd.Parameters.AddWithValue("$t", toUnix);
+            cmd.Parameters.AddWithValue("$n", Math.Clamp(limit, 1, 20000));
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new HistoryRow(
+                    DateTimeOffset.FromUnixTimeSeconds(r.GetInt64(0)).ToLocalTime().ToString("HH:mm:ss"),
+                    r.GetString(1), r.GetInt64(2), r.GetString(3), r.GetString(4), r.GetInt64(5) != 0));
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[history] 区间读取失败: {ex.Message}"); }
+        return list;
+    }
     /// <summary>某 scope 最新一条消息之前（不含）的若干条 —— 供"重启后补上下文"用</summary>
     public List<HistoryRow> Before(string scope, long beforeTs, int limit)
     {

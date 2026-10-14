@@ -74,11 +74,12 @@ internal static class Program
                                         Path.Combine(settings.MemoryDir, "watched_groups.txt"));
         msgStore.Transport = client.TransportName;   // 出站记录用真实通道名
         msgStore.Purge();
+        _ = Task.Run(async () => { await Task.Delay(TimeSpan.FromSeconds(20)); await BackfillWatchedGroupsAsync(); });
         _ = Task.Run(async () =>
         {
             while (true)
             {
-                try { await Task.Delay(TimeSpan.FromHours(6)); msgStore.Purge(); }
+                try { await Task.Delay(TimeSpan.FromHours(6)); msgStore.Purge(); await BackfillWatchedGroupsAsync(); }
                 catch { }
             }
         });
@@ -191,6 +192,38 @@ internal static class Program
         client.OnPrivateMessage += (s, e) => _ = HandlePrivateAsync(e);
 
         // ---- 群消息：直接分发给插件（命令插件优先级高，AI 插件最后） ----
+
+        // 首次关注自动补拉历史：关注群里还没有消息库数据时，用通道历史接口往回拉几页
+        async Task BackfillWatchedGroupsAsync()
+        {
+            try
+            {
+                var watchedFile = Path.Combine(settings.MemoryDir, "watched_groups.txt");
+                if (!File.Exists(watchedFile)) return;
+                foreach (var line in File.ReadAllLines(watchedFile))
+                {
+                    if (!long.TryParse(line.Trim(), out var gid) || gid <= 0) continue;
+                    var scope = $"group:{gid}";
+                    if (msgStore.HasScope(scope)) continue;          // 已有数据就不重复补
+                    long? anchorMsg = null;
+                    var got = 0;
+                    for (var page = 0; page < 5; page++)
+                    {
+                        var r = anchorMsg is null
+                            ? await client.GetGroupMsgHistoryAsync(gid, null, 100)
+                            : await client.GetGroupMsgHistoryAsync(gid, anchorMsg, 100);
+                        if (!r.Success || r.Data is null || r.Data.Count == 0) break;
+                        foreach (var m in r.Data.OrderBy(x => x.Time))
+                            msgStore.RecordIn(client.TransportName, scope, m.MessageId, m.Time, m.UserId, m.Sender?.Nickname ?? "", BotHelpers.MsgToText(m.Message), null);
+                        got += r.Data.Count;
+                        anchorMsg = r.Data.Min(x => x.MessageId);
+                    }
+                    if (got > 0) Console.WriteLine($"[history] 关注群 {gid} 首次补拉 {got} 条历史");
+                }
+            }
+            catch (Exception ex) { Console.WriteLine($"[history] 补拉历史失败: {ex.Message}"); }
+        }
+
         client.OnGroupMessage += (s, e) => _ = HandleGroupAsync(e);
 
         // 群消息：先做宿主命令分发（带前缀的命令对所有人开放，安全命令内部鉴权），未命中交给插件
@@ -234,7 +267,12 @@ internal static class Program
             if (!string.IsNullOrEmpty(prefix) && e.Message.PlainText.TrimStart().StartsWith(prefix, StringComparison.Ordinal))
             {
                 var isGroupAdmin = e.Message.UserId.HasValue && config.AdminUins.Contains(e.Message.UserId.Value);
-                var handled = await TryDispatchCommandAsync(e.Message.PlainText.Trim(), isAdmin: isGroupAdmin,
+                // 命令处理器拿不到"来源"：用户只打 reset 时，宿主把当前会话补进参数
+                var cmdText = e.Message.PlainText.Trim();
+                if (cmdText.Equals(prefix + "reset", StringComparison.OrdinalIgnoreCase) && e.Message.GroupId is > 0)
+                    cmdText = $"{prefix}reset group:{e.Message.GroupId}";
+
+                var handled = await TryDispatchCommandAsync(cmdText, isAdmin: isGroupAdmin,
                     r => api.SendGroupMsgAsync(e.Message.GroupId ?? 0, Msg.Quote(e.Message.MessageId, r)));
                 if (handled) return; // 命中命令：回复已发，不再给插件（AI）
             }
@@ -369,6 +407,10 @@ internal static class Program
             var text = m.PlainText.Trim();
 
             // 宿主级命令（内置 + 插件注册的），命中即由宿主回复，不进插件
+            // 同上：私聊裸 reset 补上来源
+            if (text.Equals(CurrentPrefix() + "reset", StringComparison.OrdinalIgnoreCase))
+                text = $"{CurrentPrefix()}reset user:{m.UserId.Value}";
+
             if (await TryDispatchCommandAsync(text, isAdmin: true,
                     r =>
                     {

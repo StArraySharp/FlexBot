@@ -1,4 +1,4 @@
-﻿using FlexBot.PluginApi;
+using FlexBot.PluginApi;
 
 namespace FlexBot;
 
@@ -18,6 +18,9 @@ sealed class HistoryStoreAccess : IHistoryStore
 
     public IReadOnlyList<HistoryMessage> Search(string scope, string query, int limit = 10)
         => Map(MessageStore.Current?.Search(scope, query, limit));
+
+    public IReadOnlyList<HistoryMessage> Range(string scope, long fromUnix, long toUnix, int limit = 2000)
+        => Map(MessageStore.Current?.Range(scope, fromUnix, toUnix, limit));
 
     private static List<HistoryMessage> Map(IEnumerable<MessageStore.HistoryRow>? rows)
         => rows is null ? [] : rows.Select(r => new HistoryMessage(r.Ts, r.Dir, r.UserId, r.Nick, r.Text)).ToList();
