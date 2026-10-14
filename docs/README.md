@@ -6,6 +6,7 @@
 | [plugin-dev.md](plugin-dev.md) | 插件开发指南：脚本插件与编译型插件、NuGet 依赖自动解析、插件工厂与生成审计 |
 | [plugin-api.md](plugin-api.md) | 插件开发参考：`IBotPlugin` / `IBotContext` / `IBotApi` 契约、消息模型、消息与事件 Hub、内置服务、设置项、两个通道的能力差异 |
 | [http-api.md](http-api.md) | 宿主 HTTP API：认证方式、全部端点、请求/响应示例、静态资源与热更新语义 |
+| [roadmap.md](roadmap.md) | 开发路线图：宿主主体的优化事项（每条带实测证据与验证方式）与"明确不做"清单 |
 
 面向最终用户的使用说明见仓库根目录的 [`README.md`](../README.md)；发布包内另附 `使用说明.txt`。
 
