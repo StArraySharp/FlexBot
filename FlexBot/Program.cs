@@ -342,6 +342,10 @@ internal static class Program
         Directory.CreateDirectory(logDir);
 
         // 启动外部依赖（NapCat、LLBot）
+        // 磁盘卫生：清掉超过保留期的宿主日志、以及早期实验留下的废弃目录
+        LogHousekeeping.CleanHostLogs(logDir);
+        LogHousekeeping.CleanObsoleteDirs(settings.MemoryDir);
+
         var procMgr = new ProcessManager(logDir);
         if (settings.IsolateDependencyLogs && (!string.IsNullOrWhiteSpace(settings.NapCatCmd) || !string.IsNullOrWhiteSpace(settings.LLBotCmd)))
         {

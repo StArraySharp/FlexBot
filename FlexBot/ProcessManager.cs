@@ -91,6 +91,8 @@ sealed class ProcessManager
     private Process StartProcess(string cmd, string tag, string logFileName, out StreamWriter logWriter)
     {
         var logPath = Path.Combine(_logDir, logFileName);
+        // 依赖进程日志会无限增长（实测出现过 119MB 的 llbot.log）⇒ 打开之前先按上限轮转
+        LogHousekeeping.RotateChildLog(logPath);
         logWriter = new StreamWriter(logPath, append: true) { AutoFlush = true };
 
         // 跨平台：Windows 走 cmd.exe，Linux/macOS 走 bash（.bat/.sh 由各自 shell 解释）
