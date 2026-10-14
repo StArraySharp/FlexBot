@@ -17,7 +17,11 @@ function scopeLabel(scope) {
        : scope.startsWith('private:') ? '私聊 ' + scope.slice(8)
        : scope;
 }
-function histStatus(text) {
+/* 会话失效（宿主重启会换令牌）：别让人对着一堆空框猜，直接回登录页 */
+function needLogin(res) {
+  if (res && res.status === 401) { location.href = '/login'; return true; }
+  return false;
+}function histStatus(text) {
   const el = $('histStatus');
   if (el) el.textContent = text;
 }
@@ -28,7 +32,9 @@ async function loadHistory() {
 }
 async function loadHistoryStats() {
   try {
-    const d = await (await fetch('/api/history/stats')).json();
+    const res = await fetch('/api/history/stats');
+    if (needLogin(res)) return;
+    const d = await res.json();
     if (!d.enabled) { $('histTotal').textContent = '未启用'; return; }
     $('histTotal').textContent = d.total + ' 条' + (d.queued ? '（待入库 ' + d.queued + '）' : '');
     $('histGroup').textContent = '群 ' + d.group + ' · 保留 ' + d.groupKeepDays + ' 天';
@@ -41,7 +47,9 @@ async function loadHistoryScopes() {
   const sel = $('histScope');
   const cur = sel.value;
   try {
-    const list = await (await fetch('/api/history/scopes')).json();
+    const res = await fetch('/api/history/scopes');
+    if (needLogin(res)) return;
+    const list = await res.json();
     sel.innerHTML = '';
     for (const s of list) {
       const o = document.createElement('option');
@@ -70,6 +78,7 @@ async function loadHistoryRecent() {
     histStatus('网络异常 ' + url);
     return;
   }
+  if (needLogin(res)) return;
   if (!res.ok) {
     box.textContent = '读取失败：HTTP ' + res.status;
     histStatus('HTTP ' + res.status + ' ' + url);
