@@ -719,6 +719,10 @@ class AgentService
 
         Console.WriteLine($"[mem] day-summary group {groupId} {dayStart:yyyy-MM-dd}: {dayMsgs.Count} 条消息");
         var prompt = $"以下是 QQ 群 {groupId} 在 {dayStart:yyyy-MM-dd} 00:00-24:00 的聊天记录，请总结当天的主要内容：讨论了什么话题、谁参与了什么观点、有什么重要事件或结论、群氛围如何。用简洁的 Markdown 分点输出。\n\n{transcript}";
+        // P3 尾巴：让总结顺带产出结构化记忆条目（解析与落库链路已就绪且单测通过）
+        prompt += "\n\n另外，请在所有内容之后**额外**输出一个 JSON 数组（只输出数组本身，不要解释）："
+                     + "[{\"kind\":\"rule|preference|fact|event|relation\",\"text\":\"一句完整的话\",\"importance\":1-5,\"tags\":\"逗号分隔\"}]，"
+                     + "挑出真正值得长期记住的内容，没有就给 []。";
         var summary = (await _summarizer.RunAsync(prompt)).ToString();
 
         try

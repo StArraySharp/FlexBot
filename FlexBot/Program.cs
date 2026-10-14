@@ -15,7 +15,7 @@ namespace FlexBot;
 /// 顶层语句生成的 Main 无法附加特性，故这里改成显式入口。
 /// 窗口本身在 PhotinoGui 里另起 STA 线程运行（见该类注释），主线程只负责编排与收尾。
 /// </summary>
-internal static class Program
+internal static partial class Program
 {
     [STAThread]
     private static void Main(string[] args)
@@ -75,6 +75,8 @@ internal static class Program
         msgStore.Transport = client.TransportName;   // 出站记录用真实通道名
         msgStore.Purge();
         var usageStore = new UsageStore(Path.Combine(settings.MemoryDir, "flexbot.db"));   // AI 用量与消息共库
+        var sessionReg = new SessionRegistry(Path.Combine(settings.MemoryDir, "flexbot.db"));   // 会话 id 与记忆组（P4）
+        var memNotes = new MemoryNotesStore(Path.Combine(settings.MemoryDir, "flexbot.db"));   // 长期记忆条目（P3）
         _ = Task.Run(async () => { await Task.Delay(TimeSpan.FromSeconds(20)); await BackfillWatchedGroupsAsync(); });
         _ = Task.Run(async () =>
         {
@@ -86,6 +88,8 @@ internal static class Program
         });
         var events = new EventRouter();
         var plugins = new PluginManager(api, config, messages, events, settings);
+        var dispatcher = new CommandDispatcher(plugins, config);   // ② 命令分发已抽成可测类
+        var runtime = new BotRuntime(client, msgStore, plugins, dispatcher, config, api, messages);
         BotState.WsUrl = settings.WsUrl;
 
         // ===================== 事件接线（宿主 → 插件路由） =====================
@@ -178,19 +182,19 @@ internal static class Program
         {
             try
             {
-                var prefix = CurrentPrefix();
+                var prefix = CurrentPrefix(plugins, config);
                 var text = (i.Text ?? "").Trim();
                 if (!text.StartsWith(prefix, StringComparison.Ordinal)) text = prefix + text;   // 按钮 data 可能不带前缀
                 var isAdmin = i.UserId > 0 && config.AdminUins.Contains(i.UserId);
                 Console.WriteLine($"[互动] {(i.IsGroup ? "群" + i.GroupId : "私聊")} {i.UserId} 指令 \"{text}\" 管理员={isAdmin}");
-                await TryDispatchCommandAsync(text, isAdmin,
+                await dispatcher.DispatchAsync(text, isAdmin,
                     r => i.IsGroup ? client.SendGroupMsgAsync(i.GroupId ?? 0, r) : client.SendPrivateMsgAsync(i.UserId, r));
             }
             catch (Exception ex) { Console.WriteLine($"[互动] 处理失败: {ex.Message}"); }
         };
 
         // ---- 私聊（仅管理员）：宿主级 !plugin 命令 + 注册命令分发，其余分发给插件 ----
-        client.OnPrivateMessage += (s, e) => _ = HandlePrivateAsync(e);
+        client.OnPrivateMessage += (s, e) => _ = runtime.HandlePrivateAsync(e);
 
         // ---- 群消息：直接分发给插件（命令插件优先级高，AI 插件最后） ----
 
@@ -225,203 +229,17 @@ internal static class Program
             catch (Exception ex) { Console.WriteLine($"[history] 补拉历史失败: {ex.Message}"); }
         }
 
-        client.OnGroupMessage += (s, e) => _ = HandleGroupAsync(e);
+        client.OnGroupMessage += (s, e) => _ = runtime.HandleGroupAsync(e);
 
         // 群消息：先做宿主命令分发（带前缀的命令对所有人开放，安全命令内部鉴权），未命中交给插件
-        async Task HandleGroupAsync(GroupMessageEventArgs e)
-        {
-            // 去重放在最前：重连重放/重复投递的同一条消息只处理一次（含绑定的重复请求）
-            if (MessageDedup.IsDuplicate($"{client.TransportName}:g:{e.Message.MessageId}")) { Stats.IncDedupDropped(); return; }
-            // 落库：只存关注群与私聊，未关注群直接丢弃。放在去重之后、任何分支之前 ——
-            // 存储不能依赖命令匹配或管理员判断，否则命令消息与非管理员私聊会漏记。
-            var sm = e.Message;
-            // 机器人自己消息的回显：出站路径已记为 dir=out ⇒ 这里跳过，避免重复
-            if (sm.SelfId != 0 && sm.UserId == sm.SelfId) return;
-            var smScope = msgStore.ScopeFor(sm.GroupId, sm.UserId ?? 0);
-            if (smScope is not null)
-                msgStore.RecordIn(client.TransportName, smScope, sm.MessageId,
-                    sm.Time > 0 ? sm.Time : DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                    sm.UserId ?? 0, sm.SenderName, sm.PlainText, System.Text.Json.JsonSerializer.Serialize(sm));
-
-            Stats.IncIn();
-            Stats.Recent.Add("in", "group", e.Message.GroupId ?? 0, e.Message.PlainText);
-
-            // 官方通道的身份绑定要在权限门禁之前处理（此时主人还没有身份），用控制台一次性口令保护
-            if (await TryHandleBindAsync(e.Message,
-                    r => client.SendGroupMsgAsync(e.Message.GroupId ?? 0, Msg.Quote(e.Message.MessageId, r))))
-                return;
-
-            // 带前缀才进命令分发（未带前缀直接给插件，AI 才有机会看到普通聊天）
-            var prefix = CurrentPrefix();
-            // 群内禁用仅私聊命令（fs_* / pb_*）：群里内容不可信，按来源直接切断
-            if (!string.IsNullOrEmpty(prefix) && e.Message.PlainText.TrimStart().StartsWith(prefix, StringComparison.Ordinal))
-            {
-                var cmdName = e.Message.PlainText.Trim()[prefix.Length..].Trim().Split(' ', 2)[0];
-                if (FlexBot.PluginApi.CommandPolicy.IsPrivateOnly(cmdName))
-                {
-                    Console.WriteLine($"[route] 群 {e.Message.GroupId} 内拒绝仅私聊命令: {cmdName}");
-                    await api.SendGroupMsgAsync(e.Message.GroupId ?? 0,
-                        Msg.Quote(e.Message.MessageId, FlexBot.PluginApi.CommandPolicy.GroupDenyMessage));
-                    return;
-                }
-            }
-            if (!string.IsNullOrEmpty(prefix) && e.Message.PlainText.TrimStart().StartsWith(prefix, StringComparison.Ordinal))
-            {
-                var isGroupAdmin = e.Message.UserId.HasValue && config.AdminUins.Contains(e.Message.UserId.Value);
-                // 命令处理器拿不到"来源"：用户只打 reset 时，宿主把当前会话补进参数
-                var cmdText = e.Message.PlainText.Trim();
-                if (cmdText.Equals(prefix + "reset", StringComparison.OrdinalIgnoreCase) && e.Message.GroupId is > 0)
-                    cmdText = $"{prefix}reset group:{e.Message.GroupId}";
-
-                var handled = await TryDispatchCommandAsync(cmdText, isAdmin: isGroupAdmin,
-                    r => api.SendGroupMsgAsync(e.Message.GroupId ?? 0, Msg.Quote(e.Message.MessageId, r)));
-                if (handled) return; // 命中命令：回复已发，不再给插件（AI）
-            }
-            await messages.DispatchGroupAsync(e);
-        }
 
         // 当前生效命令前缀：优先 Admin 插件设置，缺失回落宿主配置（热更新，每条消息实时读取）
-        string CurrentPrefix() =>
-            plugins.GetPluginSettingString("Admin", "CommandPrefix") is { Length: > 0 } p ? p
-                : string.IsNullOrEmpty(config.CommandPrefix) ? "!" : config.CommandPrefix;
-
         // 统一命令分发：text 已去除前缀，返回 true 表示命中并由宿主回复
-        async Task<bool> TryDispatchCommandAsync(string text, bool isAdmin, Func<string, Task> reply)
-        {
-            var prefix = CurrentPrefix();
-            if (string.IsNullOrEmpty(prefix) || !text.StartsWith(prefix, StringComparison.Ordinal))
-                return false;
-
-            var body = text[prefix.Length..].TrimStart();
-            if (body.Length == 0) return false;
-            var sp = body.IndexOf(' ');
-            var cmdName = (sp < 0 ? body : body[..sp]).ToLowerInvariant();
-            var args = sp < 0 ? "" : body[(sp + 1)..].Trim();
-
-            // 宿主内置命令：plugin
-            if (cmdName == "plugin")
-            {
-                if (!isAdmin) { await reply("仅管理员可用"); return true; }
-                await reply(await plugins.HandleCommandAsync(text));
-                return true;
-            }
-            // 宿主内置命令：help / 帮助
-            if (cmdName is "help" or "帮助")
-            {
-                await reply(BuildHelpText(prefix));
-                return true;
-            }
-
-            // 插件注册的命令
-            var reg = plugins.FindCommand(cmdName);
-            if (reg is null) return false;
-            if (!isAdmin) { await reply($"命令 {prefix}{cmdName} 仅管理员可用"); return true; }
-            try
-            {
-                var result = await reg.Value.Handler(args);
-                if (!string.IsNullOrEmpty(result)) await reply(result);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[cmd] {prefix}{cmdName} 执行异常: {ex.Message}");
-                await reply($"命令执行出错: {ex.Message}");
-            }
-            return true;
-        }
-
         // 帮助文本：内置命令 + 全部插件注册命令（带说明与用法）
-        string BuildHelpText(string prefix)
-        {
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"可用命令（前缀 {prefix}）：");
-            sb.AppendLine($"{prefix}help - 显示本帮助");
-            sb.AppendLine($"{prefix}plugin [list|load|unload|reload] - 插件管理");
-                sb.AppendLine($"{prefix}bind qq <QQ号> <口令> - 官方通道：把当前身份绑定到 QQ 号（口令在宿主控制台）");
-            foreach (var c in plugins.GetCommands())
-            {
-                var usage = string.IsNullOrEmpty(c.Usage) ? c.Name : c.Usage;
-                sb.AppendLine($"{prefix}{usage} - {c.Description}（{c.PluginName}）");
-            }
-            return sb.ToString().TrimEnd();
-        }
-
         // 官方通道身份绑定：!bind qq <QQ号> <口令>。必须放在非管理员拦截之前 ——
         // 官方通道只给 openid，主人绑之前身份对不上 OwnerUin，会被下面那道门禁直接拦掉。
         // 绑定等同提权，故必须带控制台一次性口令。
-        async Task<bool> TryHandleBindAsync(OneBotLib.Models.MessageObject m, Func<string, Task> reply)
-        {
-            if (client is not IIdentityBinder binder || !binder.BindingRequired) return false;
-            if (m.UserId is not { } uid) return false;
 
-            var prefix = CurrentPrefix();
-            var raw = (m.PlainText ?? "").Trim();
-            if (prefix.Length == 0 || !raw.StartsWith(prefix, StringComparison.Ordinal)) return false;
-            var parts = raw[prefix.Length..].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0 || !parts[0].Equals("bind", StringComparison.OrdinalIgnoreCase)) return false;
-
-            if (parts.Length < 4 || !parts[1].Equals("qq", StringComparison.OrdinalIgnoreCase) || !long.TryParse(parts[2], out var qq))
-            {
-                await reply($"用法：{prefix}bind qq <你的QQ号> <宿主控制台里的口令>");
-                return true;
-            }
-
-            var err = binder.TryBind(uid, qq, parts[3]);
-            Console.WriteLine(err is null ? $"[bind] 身份 {uid} → QQ {qq} 绑定成功" : $"[bind] 绑定失败: {err}");
-            await reply(err is null
-                ? $"已绑定：当前会话身份 → QQ {qq}。管理员/主人权限与统计即刻按该号生效。"
-                : $"绑定失败：{err}");
-            return true;
-        }
-
-        async Task HandlePrivateAsync(PrivateMessageEventArgs e)
-        {
-            // 去重：与群消息同理，重放/重复投递只处理一次
-            if (MessageDedup.IsDuplicate($"{client.TransportName}:p:{e.Message.MessageId}")) { Stats.IncDedupDropped(); return; }
-            // 落库：只存关注群与私聊，未关注群直接丢弃。放在去重之后、任何分支之前 ——
-            // 存储不能依赖命令匹配或管理员判断，否则命令消息与非管理员私聊会漏记。
-            var sm = e.Message;
-            // 机器人自己消息的回显：出站路径已记为 dir=out ⇒ 这里跳过，避免重复
-            if (sm.SelfId != 0 && sm.UserId == sm.SelfId) return;
-            var smScope = msgStore.ScopeFor(sm.GroupId, sm.UserId ?? 0);
-            if (smScope is not null)
-                msgStore.RecordIn(client.TransportName, smScope, sm.MessageId,
-                    sm.Time > 0 ? sm.Time : DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                    sm.UserId ?? 0, sm.SenderName, sm.PlainText, System.Text.Json.JsonSerializer.Serialize(sm));
-
-            Stats.IncIn();
-            Stats.Recent.Add("in", "private", e.Message.UserId ?? 0, e.Message.PlainText);
-
-            var m = e.Message;
-            if (!m.UserId.HasValue) return;
-
-            // 同上：绑定要在非管理员拦截之前
-            if (await TryHandleBindAsync(m, r => client.SendPrivateMsgAsync(m.UserId!.Value, Msg.Quote(m.MessageId, r))))
-                return;
-
-            if (!config.AdminUins.Contains(m.UserId.Value))
-            {
-                Console.WriteLine($"[private] BLOCKED non-admin {m.UserId}: {m.PlainText}");
-                return;
-            }
-
-            Console.WriteLine($"[private] {m.UserId}: {m.PlainText}");
-            var text = m.PlainText.Trim();
-
-            // 宿主级命令（内置 + 插件注册的），命中即由宿主回复，不进插件
-            // 同上：私聊裸 reset 补上来源
-            if (text.Equals(CurrentPrefix() + "reset", StringComparison.OrdinalIgnoreCase))
-                text = $"{CurrentPrefix()}reset user:{m.UserId.Value}";
-
-            if (await TryDispatchCommandAsync(text, isAdmin: true,
-                    r =>
-                    {
-                        Console.WriteLine($"[private→] {m.UserId}: {r.Replace("\n", " ⏎ ")[..Math.Min(200, r.Length)]}");
-                        return client.SendPrivateMsgAsync(m.UserId.Value, Msg.Quote(m.MessageId, r));
-                    }))
-                return;
-
-            await messages.DispatchPrivateAsync(e);
-        }
 
         // ===================== 启动 =====================
 
@@ -455,16 +273,7 @@ internal static class Program
         // 退出信号统一在这里收口：Ctrl+C(SIGINT) / kill(SIGTERM) / 控制台关闭或注销(SIGHUP)，
         // 外加 ProcessExit 兜底（任务管理器结束进程等）。POSIX 信号在 Windows 上同样由 .NET 投递。
         // 注意 Cancel=true：默认动作是立刻终止进程，不取消的话下面的收尾根本来不及跑。
-        var shutdownTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var shuttingDown = 0;
-        var cleanupGate = new object();
-        Task? cleanupTask = null;
-
-        Task CleanupAsync()
-        {
-            lock (cleanupGate) cleanupTask ??= DoCleanupAsync();
-            return cleanupTask;
-        }
+        var shutdown = new ShutdownCoordinator();
 
         async Task DoCleanupAsync()
         {
@@ -489,36 +298,16 @@ internal static class Program
         try { msgStore.Dispose(); } catch { }   // 收尾 flush 未落盘的消息
         }
 
-        void RequestShutdown(string reason)
-        {
-            if (Interlocked.Exchange(ref shuttingDown, 1) != 0) return;
-            Console.WriteLine($"[shutdown] 收到 {reason}，开始优雅停机…");
-            shutdownTcs.TrySetResult(true);
-            // 兜底路径：主流程可能被阻塞（stdin 重定向、窗口模式等），后台收尾后强制退出
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var cleanup = CleanupAsync();
-                    var done = await Task.WhenAny(cleanup, Task.Delay(TimeSpan.FromSeconds(20)));
-                    if (!ReferenceEquals(done, cleanup)) Console.WriteLine("[shutdown] 收尾超时，直接退出");
-                }
-                catch (Exception ex) { Console.WriteLine($"[shutdown] 收尾异常: {ex.Message}"); }
-                Console.WriteLine("[+] Closed.");
-                Environment.Exit(0);
-            });
-        }
-
-        using var sigInt = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx => { ctx.Cancel = true; RequestShutdown("Ctrl+C"); });
-        using var sigTerm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; RequestShutdown("SIGTERM"); });
-        using var sigHup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, ctx => { ctx.Cancel = true; RequestShutdown("SIGHUP(控制台关闭)"); });
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => RequestShutdown("ProcessExit");
+        using var sigInt = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx => { ctx.Cancel = true; shutdown.RequestShutdown("Ctrl+C", DoCleanupAsync); });
+        using var sigTerm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; shutdown.RequestShutdown("SIGTERM", DoCleanupAsync); });
+        using var sigHup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, ctx => { ctx.Cancel = true; shutdown.RequestShutdown("SIGHUP(控制台关闭)", DoCleanupAsync); });
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdown.RequestShutdown("ProcessExit", DoCleanupAsync);
 
         // Bot 核心（后台运行：连接 NapCat + 加载插件 + 保活）
         var coreTask = Task.Run(RunBotAsync);
 
         // WebUI（始终开启）：窗口模式与纯控制台模式都用它，页面是同一份
-        var uiUrl = FlexBotWebUi.Start(plugins, settings, client, procMgr, () => RequestShutdown("WebUI 请求停止"));
+        var uiUrl = FlexBotWebUi.Start(plugins, settings, client, procMgr, () => shutdown.RequestShutdown("WebUI 请求停止", DoCleanupAsync));
         Console.WriteLine($"[webui] 控制台已就绪: {uiUrl}");
         SingleInstance.WriteOwnerHint(settings.MemoryDir, uiUrl);   // 供重复启动时提示"已在运行的实例"
 
@@ -535,7 +324,7 @@ internal static class Program
         if (runMode == RunMode.AppWindow)
         {
             // 官方示例的写法：就在这个 STA 主线程上建窗并阻塞到关窗
-            windowRendered = PhotinoGui.TryRun(uiUrl, () => RequestShutdown("窗口关闭"));
+            windowRendered = PhotinoGui.TryRun(uiUrl, () => shutdown.RequestShutdown("窗口关闭", DoCleanupAsync));
             if (!windowRendered)
             {
                 // 窗口没能渲染（典型：WebView2 环境创建失败）⇒ 退回控制台 + WebUI
@@ -548,12 +337,12 @@ internal static class Program
         // 窗口模式：关窗即退出（上面的回调已触发收尾）；控制台模式或已退回：常驻到 Ctrl+C / WebUI 停止
         coreTask.GetAwaiter().GetResult();
         // 全部路径都汇合到这里收尾：卸载插件 → 断开通道 → 停依赖进程
-        if (Volatile.Read(ref shuttingDown) == 0)
+        if (!shutdown.ShuttingDown)
         {
-            Interlocked.Exchange(ref shuttingDown, 1);
+            shutdown.MarkShuttingDown();
             Console.WriteLine("[shutdown] 主流程结束，开始收尾…");
         }
-        CleanupAsync().GetAwaiter().GetResult();
+        shutdown.CleanupAsync(DoCleanupAsync).GetAwaiter().GetResult();
         Console.WriteLine("[+] Closed.");
 
         async Task RunBotAsync()
@@ -605,7 +394,7 @@ internal static class Program
             while (Console.ReadLine() is not null) { }
 
             // 等退出信号（Ctrl+C / SIGTERM / 控制台关闭）→ 由下面主流程统一收尾
-            await shutdownTcs.Task;
+            await shutdown.WaitAsync();
         }
 
         // 给每行输出加时间戳（HH:mm:ss.fff）并写入环形缓冲（WebUI 用）

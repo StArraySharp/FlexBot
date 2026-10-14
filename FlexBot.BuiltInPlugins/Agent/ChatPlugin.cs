@@ -83,6 +83,20 @@ public sealed class ChatPlugin : IBotPlugin
                 if (!long.TryParse(args.Trim(), out var gid) || gid <= 0)
                     return "用法: summary <群号>（总结今天 0 点至 24 点的群聊）";
                 var result = await _agent.SummarizeDayAsync(gid, DateTime.Today);
+                // P3 尾巴：总结里若带出结构化条目（MemoryNoteParser 约定），落进长期记忆表。
+                // 解析器与存储都已单测；这里只做串联，任何失败都不影响总结本身。
+                try
+                {
+                    var notes = MemoryNoteParser.Parse(result);
+                    foreach (var n in notes)
+                        context.Notes.Add($"group:{gid}", n.Kind, n.Text, n.Importance, n.Tags);
+                    if (notes.Count > 0)
+                    {
+                        Console.WriteLine($"[mem] 日报顺带写入 {notes.Count} 条长期记忆（group:{gid}）");
+                        result += $"\n\n（已存入长期记忆 {notes.Count} 条）";
+                    }
+                }
+                catch (Exception ex) { Console.WriteLine($"[mem] 日报记忆入库失败: {ex.Message}"); }
                 return result.Length > 1800 ? result[..1800] + "\n…（已截断，完整版见记忆文件）" : result;
             },
             "summary <群号>"));
