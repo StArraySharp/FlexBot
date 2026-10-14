@@ -139,6 +139,7 @@ class BotTools(IBotContext ctx)
     async Task<string> RunCommand([Description("命令名，如 timer / watchs / plugin")] string command, [Description("参数串，可空")] string? args = null)
     {
         if (!IsAdmin) return "无权限：只有机器人管理员可以通过我执行命令。";
+        if (InGroup && CommandPolicy.IsPrivateOnly(command)) return DenyGroup();   // 群内不许触达 fs_*/pb_*
         var result = await ctx.TryInvokeCommandAsync(command, args ?? "");
         return result ?? $"未找到命令「{command}」。可先调用 list_commands 查看全部可用命令。";
     }
@@ -164,8 +165,13 @@ class BotTools(IBotContext ctx)
             ? result + "。注意：只能操作文件工作区内的相对路径。"
             : result;
 
+    // ---- 群内禁用仅私聊能力（fs_* / pb_*）----
+    // 群消息内容不可信：任何人都能往上下文里塞指令，而门禁只看"谁发的消息"。
+    private static bool InGroup => CurrentTurn.Value is { GroupId: > 0 };
+    private static string DenyGroup() => CommandPolicy.GroupDenyMessage;
     private async Task<string> FsInvoke(string cmd, string args)
     {
+        if (InGroup) return DenyGroup();      // 文件工作区仅限私聊
         var r = await ctx.TryInvokeCommandAsync(cmd, args);
         return r is null ? "文件工作区不可用（FileSystem 插件未加载）。" : r;
     }

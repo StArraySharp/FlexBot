@@ -219,6 +219,18 @@ internal static class Program
 
             // 带前缀才进命令分发（未带前缀直接给插件，AI 才有机会看到普通聊天）
             var prefix = CurrentPrefix();
+            // 群内禁用仅私聊命令（fs_* / pb_*）：群里内容不可信，按来源直接切断
+            if (!string.IsNullOrEmpty(prefix) && e.Message.PlainText.TrimStart().StartsWith(prefix, StringComparison.Ordinal))
+            {
+                var cmdName = e.Message.PlainText.Trim()[prefix.Length..].Trim().Split(' ', 2)[0];
+                if (FlexBot.PluginApi.CommandPolicy.IsPrivateOnly(cmdName))
+                {
+                    Console.WriteLine($"[route] 群 {e.Message.GroupId} 内拒绝仅私聊命令: {cmdName}");
+                    await api.SendGroupMsgAsync(e.Message.GroupId ?? 0,
+                        Msg.Quote(e.Message.MessageId, FlexBot.PluginApi.CommandPolicy.GroupDenyMessage));
+                    return;
+                }
+            }
             if (!string.IsNullOrEmpty(prefix) && e.Message.PlainText.TrimStart().StartsWith(prefix, StringComparison.Ordinal))
             {
                 var isGroupAdmin = e.Message.UserId.HasValue && config.AdminUins.Contains(e.Message.UserId.Value);
