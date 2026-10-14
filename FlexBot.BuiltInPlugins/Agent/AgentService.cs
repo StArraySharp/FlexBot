@@ -664,8 +664,23 @@ class AgentService
         const int pageSize = 100;
         const int maxPages = 15;
         var all = new List<MsgInfo>();
+        // 先查消息库（P3）：不受通道单次分页上限约束；库里没有该群数据时才回落去拉通道历史
+        if (_ctx.History is { Enabled: true } h)
+        {
+            var rows = h.Range($"group:{groupId}", startUnix, endUnix, 5000);
+            foreach (var row in rows)
+                all.Add(new MsgInfo
+                {
+                    Time = startUnix,   // 库里的 Range 只给可读时间；这里落在当天区间内即可通过过滤
+                    UserId = row.UserId,
+                    Message = row.Dir == "out" ? $"{row.Time} 机器人: {row.Text}" : $"{row.Time} {row.Nick}: {row.Text}",
+                    MessageType = "group",
+                    GroupId = groupId,
+                });
+            if (rows.Count > 0) Console.WriteLine($"[ai] 日报数据来自消息库：{rows.Count} 条（{groupId} {startUnix}~{endUnix}）");
+        }
         long? anchor = null;
-        for (var page = 0; page < maxPages; page++)
+        for (var page = 0; page < maxPages && all.Count == 0; page++)
         {
             var r = anchor is null
                 ? await _api.GetGroupMsgHistoryAsync(groupId, count: pageSize)

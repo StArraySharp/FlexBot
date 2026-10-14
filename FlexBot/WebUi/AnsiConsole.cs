@@ -30,6 +30,9 @@ static class AnsiConsole
     private static bool _tried;
     private static bool _enabled;
 
+    /// <summary>控制台是否已开启 VT（未开启时说明没有可着色的终端，往它写 ANSI 只会得到乱码）</summary>
+    public static bool Enabled => _enabled;
+
     /// <summary>打开 VT 处理（可重复调用；没有控制台时静默跳过）</summary>
     public static bool EnableVirtualTerminal()
     {

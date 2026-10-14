@@ -44,7 +44,16 @@ static class LogStore
             {
                 _writer?.Dispose();
                 Directory.CreateDirectory(LogDir);
-                _writer = new StreamWriter(LogFile, append: true) { AutoFlush = true };
+                // 逐行 AutoFlush 会让每条日志都碰一次磁盘（子进程日志洪水时很贵）⇒ 关掉，改定时批量刷
+            _writer = new StreamWriter(LogFile, append: true) { AutoFlush = false };
+            _ = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    try { await Task.Delay(1000); lock (_lock) { _writer?.Flush(); } }
+                    catch { }
+                }
+            });
                 _writerDate = today;
             }
             _writer.WriteLine(line);

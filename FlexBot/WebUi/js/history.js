@@ -25,10 +25,32 @@ function needLogin(res) {
   const el = $('histStatus');
   if (el) el.textContent = text;
 }
-async function loadHistory() {
+async function loadUsage() {
+  try {
+    const res = await fetch('/api/usage');
+    if (needLogin(res)) return;
+    const d = await res.json();
+    const el = $('histUsage');
+    if (!el) return;
+    el.textContent = d.enabled
+      ? `AI ${d.calls} 次 · 入 ${(d.inTok || 0).toLocaleString()} / 出 ${(d.outTok || 0).toLocaleString()} tok · 今日 ${d.todayCalls} 次`
+      : 'AI 用量未启用';
+  } catch { }
+}
+async function loadSystem() {
+  try {
+    const res = await fetch('/api/system');
+    if (needLogin(res)) return;
+    const d = await res.json();
+    const el = $('histSys');
+    if (el) el.textContent = `磁盘剩 ${(d.diskFreeMb / 1024).toFixed(1)}G · 内存 ${d.memWorkingSetMb}M · 库 ${(d.dbBytes / 1024).toFixed(0)}K`;
+  } catch { }
+}async function loadHistory() {
   await loadHistoryStats();
   await loadHistoryScopes();
   await loadHistoryRecent();
+  await loadUsage();
+  await loadSystem();
 }
 async function loadHistoryStats() {
   try {
