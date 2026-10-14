@@ -26,7 +26,7 @@ static class WebUi
     [
         // JS 顺序敏感：nav（页面切换/工具）→ 日志/状态/插件/配置 → 外观 → 认证 → 快捷命令 → main（轮询入口）
         "js/nav.js", "js/logs.js", "js/status.js", "js/plugins.js",
-        "js/config.js", "js/appearance.js", "js/auth.js", "js/main.js",
+        "js/config.js", "js/history.js", "js/appearance.js", "js/auth.js", "js/main.js",
         // CSS 顺序：变量/基础 → 侧栏 → 通用组件 → 页面 → 移动端
         "css/base.css", "css/nav.css", "css/components.css", "css/pages.css", "css/mobile.css",
     ];
@@ -276,6 +276,44 @@ static class WebUi
 
         // 实时消息流（认证）：增量轮询，协议与 /api/logs 一致（用返回的 next 作为下次 after）
         app.MapGet("/api/messages", (long after, int? max) => Results.Json(Stats.Recent.GetAfter(after, max ?? 200)));
+
+        // 历史消息（认证）：只读统计 / 会话清单 / 最近消息（数据层 P1；全文检索属于 P2）
+        static string FmtTs(long unix) => unix <= 0 ? "—"
+            : DateTimeOffset.FromUnixTimeSeconds(unix).ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+        app.MapGet("/api/history/stats", () =>
+        {
+            var s = MessageStore.Current;
+            if (s is null) return Results.Json(new { enabled = false });
+            var (total, group, priv, queued, bytes, oldest, newest) = s.Stats();
+            return Results.Json(new
+            {
+                enabled = true,
+                total,
+                group,
+                privateMsgs = priv,
+                queued,
+                bytes,
+                oldest,
+                newest,
+                groupKeepDays = MessageStore.GroupKeepDays,
+                privateKeepDays = MessageStore.PrivateKeepDays,
+            });
+        });
+
+        app.MapGet("/api/history/scopes", () =>
+        {
+            var s = MessageStore.Current;
+            if (s is null) return Results.Json(Array.Empty<object>());
+            return Results.Json(s.Scopes().Select(x => new { scope = x.Scope, count = x.Count, last = FmtTs(x.Last) }));
+        });
+
+        app.MapGet("/api/history/recent", (string? scope, int? limit) =>
+        {
+            var s = MessageStore.Current;
+            if (s is null || string.IsNullOrWhiteSpace(scope)) return Results.Json(Array.Empty<object>());
+            return Results.Json(s.Recent(scope, limit ?? 50));
+        });
 
         app.MapGet("/api/logs", (int after) =>
         {

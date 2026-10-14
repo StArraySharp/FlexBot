@@ -13,6 +13,7 @@
   <ItemGroup>
     <!-- 原生应用窗口（Photino + WebView2）。仅 Windows/macOS/Linux 桌面环境使用；
          若系统没有可用的图形界面或 WebView2 运行时，宿主会自动改走"控制台 + 浏览器"的 WebUI 形态。 -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.13" />
     <PackageReference Include="Photino.NET" Version="4.0.16" />
     <!-- csx 插件：内存编译用户源码（只宿主需要，插件与脚本无需携带编译器） -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
@@ -60,8 +61,7 @@
     <ItemGroup>
       <PhotinoNativeDll Include="$(OutDir)runtimes\$(_PhotinoWinRid)\native\*.dll" />
     </ItemGroup>
-    <Copy SourceFiles="@(PhotinoNativeDll)" DestinationFolder="$(OutDir)"
-          SkipUnchangedFiles="true" ContinueOnError="true" />
+    <Copy SourceFiles="@(PhotinoNativeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" ContinueOnError="true" />
   </Target>
 
 </Project>

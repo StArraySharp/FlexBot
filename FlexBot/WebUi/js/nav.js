@@ -6,6 +6,7 @@ let lastId = 0;
 const PAGE_META = {
   dash: ['概览', '运行状态一览'], plugins: ['插件', '加载 / 卸载 / 热重载'],
   config: ['配置', '连接 · 模型 · 提示词'], logs: ['日志', '实时事件流'],
+  history: ['历史', '关注群与私聊消息（只读）'],
 };
 document.querySelectorAll('.navitem').forEach(item => {
   item.onclick = () => switchPage(item.dataset.page);
@@ -19,6 +20,7 @@ function switchPage(p) {
     $('page-config').scrollTop = 0;
     loadConfig();
   }
+  if (p === 'history') loadHistory();
 }
 $('gotoLogs').onclick = e => { e.preventDefault(); switchPage('logs'); };
 

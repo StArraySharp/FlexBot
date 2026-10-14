@@ -68,6 +68,19 @@ internal static class Program
         // 出站记录代理：插件/AI 与宿主自身的发送都进消息流（WebUI 实时消息流用）
         var api = new RecordingBotApi(client);
         var messages = new MessageRouter();
+
+        // 消息落库（数据层 P1）：只存关注群与私聊。建库后先做一次保留期清理，之后每 6 小时一次。
+        var msgStore = new MessageStore(Path.Combine(settings.MemoryDir, "flexbot.db"),
+                                        Path.Combine(settings.MemoryDir, "watched_groups.txt"));
+        msgStore.Purge();
+        _ = Task.Run(async () =>
+        {
+            while (true)
+            {
+                try { await Task.Delay(TimeSpan.FromHours(6)); msgStore.Purge(); }
+                catch { }
+            }
+        });
         var events = new EventRouter();
         var plugins = new PluginManager(api, config, messages, events, settings);
         BotState.WsUrl = settings.WsUrl;
@@ -184,6 +197,15 @@ internal static class Program
         {
             // 去重放在最前：重连重放/重复投递的同一条消息只处理一次（含绑定的重复请求）
             if (MessageDedup.IsDuplicate($"{client.TransportName}:g:{e.Message.MessageId}")) { Stats.IncDedupDropped(); return; }
+            // 落库：只存关注群与私聊，未关注群直接丢弃。放在去重之后、任何分支之前 ——
+            // 存储不能依赖命令匹配或管理员判断，否则命令消息与非管理员私聊会漏记。
+            var sm = e.Message;
+            var smScope = msgStore.ScopeFor(sm.GroupId, sm.UserId ?? 0);
+            if (smScope is not null)
+                msgStore.Record(client.TransportName, smScope, sm.MessageId,
+                    sm.Time > 0 ? sm.Time : DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    sm.UserId ?? 0, sm.SenderName, sm.PlainText, System.Text.Json.JsonSerializer.Serialize(sm));
+
             Stats.IncIn();
             Stats.Recent.Add("in", "group", e.Message.GroupId ?? 0, e.Message.PlainText);
 
@@ -301,6 +323,15 @@ internal static class Program
         {
             // 去重：与群消息同理，重放/重复投递只处理一次
             if (MessageDedup.IsDuplicate($"{client.TransportName}:p:{e.Message.MessageId}")) { Stats.IncDedupDropped(); return; }
+            // 落库：只存关注群与私聊，未关注群直接丢弃。放在去重之后、任何分支之前 ——
+            // 存储不能依赖命令匹配或管理员判断，否则命令消息与非管理员私聊会漏记。
+            var sm = e.Message;
+            var smScope = msgStore.ScopeFor(sm.GroupId, sm.UserId ?? 0);
+            if (smScope is not null)
+                msgStore.Record(client.TransportName, smScope, sm.MessageId,
+                    sm.Time > 0 ? sm.Time : DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    sm.UserId ?? 0, sm.SenderName, sm.PlainText, System.Text.Json.JsonSerializer.Serialize(sm));
+
             Stats.IncIn();
             Stats.Recent.Add("in", "private", e.Message.UserId ?? 0, e.Message.PlainText);
 
@@ -395,6 +426,7 @@ internal static class Program
             // 停掉随宿主拉起的 NapCat/LLBot（同时释放它们的日志文件句柄，避免下次启动撞文件锁）
             try { procMgr.Dispose(); Console.WriteLine("[shutdown] 依赖进程已清理"); }
             catch (Exception ex) { Console.WriteLine($"[shutdown] 清理依赖进程异常: {ex.Message}"); }
+        try { msgStore.Dispose(); } catch { }   // 收尾 flush 未落盘的消息
         }
 
         void RequestShutdown(string reason)
