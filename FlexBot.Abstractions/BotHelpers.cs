@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -186,25 +187,109 @@ public static class BotHelpers
 
     // ============ JSON 消息解析 ============
 
-    /// <summary>GetMsgAsync 等返回的 message 字段（object）→ 纯文本。</summary>
+    /// <summary>
+    /// 消息（object）→ 可读纯文本。用于出站记录、历史消息展示、日志。
+    ///
+    /// 必须覆盖所有实际会被传进来的形态：插件发送时给的是 List&lt;MessageSegment&gt;、
+    /// GetMsgAsync 返回的是 JsonElement、宿主自己可能直接传 string。
+    /// 早期版本只处理 JsonElement，其余走 ToString()，于是出站记录里会出现
+    /// "System.Collections.Generic.List`1[OneBotLib.MessageSegment.MessageSegment]" 这种类型名。
+    /// </summary>
     public static string MsgToText(object msg)
     {
-        if (msg is JsonElement je)
+        switch (msg)
         {
-            if (je.ValueKind == JsonValueKind.Array)
-            {
-                var sb = new StringBuilder();
-                foreach (var seg in je.EnumerateArray())
+            case null:
+                return "";
+            case string s:
+                return s;
+            case MessageSegment seg:
+                return SegToText(seg);
+            case JsonElement je:
+                return JsonToText(je);
+            case IEnumerable seq:                       // List<MessageSegment> / 数组 / 其它集合
                 {
-                    if (seg.TryGetProperty("type", out var t) && t.GetString() == "text" &&
-                        seg.TryGetProperty("data", out var d) && d.TryGetProperty("text", out var txt))
-                        sb.Append(txt.GetString());
+                    var sb = new StringBuilder();
+                    foreach (var item in seq) sb.Append(MsgToText(item));
+                    return sb.ToString();
                 }
-                return sb.ToString();
-            }
-            return je.ValueKind == JsonValueKind.String ? je.GetString() ?? "" : je.GetRawText();
+            default:
+                return msg.ToString() ?? "";
         }
-        return msg.ToString() ?? "";
+    }
+
+    /// <summary>单个消息段 → 文本（文本段出原文，其余给可读占位）</summary>
+    private static string SegToText(MessageSegment seg)
+    {
+        var type = seg.Type ?? "";
+        switch (type)
+        {
+            case "text":
+                return DataText(seg.Data, "text");
+            case "at":
+                {
+                    var qq = DataText(seg.Data, "qq");
+                    return qq == "all" ? "@全体成员" : "@" + qq;
+                }
+            case "face": return "[表情]";
+            case "image": return "[图片]";
+            case "record": return "[语音]";
+            case "video": return "[视频]";
+            case "file": return "[文件]";
+            case "forward": return "[合并转发]";
+            case "poke": return "[戳一戳]";
+            case "json": return "[卡片]";
+            case "xml": return "[XML卡片]";
+            case "reply": return "";                    // 回复引用不占正文
+            default: return type.Length > 0 ? $"[{type}]" : "";
+        }
+    }
+
+    private static string DataText(Dictionary<string, object>? data, string key)
+    {
+        if (data is null || !data.TryGetValue(key, out var v) || v is null) return "";
+        return v switch
+        {
+            string s => s,
+            JsonElement je => je.ValueKind == JsonValueKind.String ? je.GetString() ?? "" : je.ToString(),
+            _ => v.ToString() ?? "",
+        };
+    }
+
+    /// <summary>JsonElement 形态（GetMsgAsync 等）：数组按段渲染，字符串原样，其它给原始 JSON</summary>
+    private static string JsonToText(JsonElement je)
+    {
+        if (je.ValueKind == JsonValueKind.Array)
+        {
+            var sb = new StringBuilder();
+            foreach (var seg in je.EnumerateArray())
+            {
+                if (seg.ValueKind != JsonValueKind.Object) continue;
+                var type = seg.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+                JsonElement data = seg.TryGetProperty("data", out var d) ? d : default;
+                sb.Append(type switch
+                {
+                    "text" => data.ValueKind == JsonValueKind.Object && data.TryGetProperty("text", out var tx)
+                              ? tx.GetString() ?? "" : "",
+                    "at" => data.ValueKind == JsonValueKind.Object && data.TryGetProperty("qq", out var qq)
+                            ? (qq.ValueKind == JsonValueKind.String && qq.GetString() == "all" ? "@全体成员" : "@" + qq.ToString())
+                            : "@某人",
+                    "face" => "[表情]",
+                    "image" => "[图片]",
+                    "record" => "[语音]",
+                    "video" => "[视频]",
+                    "file" => "[文件]",
+                    "forward" => "[合并转发]",
+                    "poke" => "[戳一戳]",
+                    "json" => "[卡片]",
+                    "xml" => "[XML卡片]",
+                    "reply" => "",
+                    _ => type.Length > 0 ? $"[{type}]" : "",
+                });
+            }
+            return sb.ToString();
+        }
+        return je.ValueKind == JsonValueKind.String ? je.GetString() ?? "" : je.GetRawText();
     }
 
     /// <summary>GetMsgAsync 等返回的 message 字段（object）→ 消息段列表。</summary>
