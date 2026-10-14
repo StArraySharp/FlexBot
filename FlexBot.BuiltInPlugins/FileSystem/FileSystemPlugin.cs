@@ -2,6 +2,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using FlexBot.PluginApi;
 
+using Zio;
+using Zio.FileSystems;
+using FlexBot.BuiltInPlugins.FileSystem;
 namespace FileSystemPlugin;
 
 /// <summary>
@@ -13,6 +16,7 @@ public sealed class FileSystemPlugin : IBotPlugin
 {
     private IBotContext _ctx = null!;
     private string _root = "";
+    private FsSandbox? _sb;   // Zio 沙箱（迁移中：读操作已改走它）
     private long _maxFileKb;
     private long _maxTotalMb;
     private string _pendingRoot = "";
@@ -81,6 +85,7 @@ public sealed class FileSystemPlugin : IBotPlugin
             return "没有待审批的根目录变更。";
 
         _root = _pendingRoot;
+        RebuildSandbox();
         Directory.CreateDirectory(_root);
         _rootChangeRequested = false;
         _rootChangeTimestamp = DateTime.MinValue;
@@ -152,6 +157,7 @@ public sealed class FileSystemPlugin : IBotPlugin
         if (string.IsNullOrEmpty(_root))
         {
             _root = newRoot;
+        RebuildSandbox();
         }
         
         Directory.CreateDirectory(_root);
@@ -229,26 +235,46 @@ public sealed class FileSystemPlugin : IBotPlugin
 
     // ---------------- 路径安全 ----------------
 
-    /// <summary>相对路径 → 沙箱内绝对路径；越界/非法返回 null。</summary>
-    private string? SafePath(string rel)
+
+    /// <summary>根目录变化后重建沙箱</summary>
+    private void RebuildSandbox()
+    {
+        try { _sb?.Dispose(); } catch { }
+        _sb = new FsSandbox(_root);
+    }
+
+    /// <summary>相对路径 -> 沙箱内 UPath（越界返回 false）</summary>
+    private bool TryU(string? rel, out UPath path)
+    {
+        path = UPath.Root;
+        if (_sb is null) return false;
+        return _sb.TryResolve(rel, out path);
+    }
+
+    /// <summary>沙箱内路径 -> 显示用相对路径（复用既有 Rel）</summary>
+    private string RelU(UPath path)
+    {
+        try { return Rel(_sb!.Fs.ConvertPathToInternal(path)); }
+        catch { return path.FullName; }
+    }
+
+    /// <summary>确保目标的父目录存在（Zio 不会替调用方建父目录）</summary>
+    private void CreateParents(UPath path)
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(rel)) return null;
-            var full = Path.GetFullPath(Path.Combine(_root, rel.Trim().Trim('"')));
-            var ok = full.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(full, _root, StringComparison.OrdinalIgnoreCase);
-            return ok ? full : null;
+            var dir = path.GetDirectory();
+            if (!dir.IsNull && dir != UPath.Root && !_sb!.Fs.DirectoryExists(dir)) _sb.Fs.CreateDirectory(dir);
         }
-        catch { return null; }
+        catch { }
     }
 
     private long TotalSize()
     {
         try
         {
-            return Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories)
-                .Sum(f => new FileInfo(f).Length);
+            if (_sb is null) return 0;
+            return _sb.Fs.EnumeratePaths(UPath.Root, "*", SearchOption.AllDirectories, SearchTarget.File).Sum(x => _sb.Fs.GetFileLength(x));
         }
         catch { return 0; }
     }
@@ -257,9 +283,6 @@ public sealed class FileSystemPlugin : IBotPlugin
 
     private async Task<string> ReadAsync(string[] p)
     {
-        // 这条命令注册为 minParts=1（允许"只给路径"），于是 `fs_read <路径> <上限>` 会把整串塞进 p[0]。
-        // AI 工具包装正是按"<路径> 999999"发的 ⇒ 旧实现把它当文件名，报"文件不存在: <路径> 999999"。
-        // 这里把 p[0] 末尾的纯数字拆出来当上限，两种写法都支持。
         var raw = p[0];
         var maxChars = 0;
         if (p.Length > 1)
@@ -268,16 +291,14 @@ public sealed class FileSystemPlugin : IBotPlugin
         }
         else
         {
-            var sp = raw.LastIndexOf(' ');
+            var sp = raw.LastIndexOf(" ");
             if (sp > 0 && int.TryParse(raw[(sp + 1)..].Trim(), out var tail)) { maxChars = tail; raw = raw[..sp].Trim(); }
         }
 
-        var path = SafePath(raw);
-        if (path is null) return Reject(raw);
-        if (!File.Exists(path)) return $"文件不存在: {raw}";
-        var text = await File.ReadAllTextAsync(path);
-        if (maxChars > 0 && maxChars < text.Length)
-            text = text[..maxChars] + $"…（共 {text.Length} 字符，已截断）";
+        if (!TryU(raw, out var path)) return Reject(raw);
+        if (!_sb!.Fs.FileExists(path)) return $"文件不存在: {raw}";
+        var text = _sb.Fs.ReadAllText(path);
+        if (maxChars > 0 && maxChars < text.Length) text = text[..maxChars] + $"…（共 {text.Length} 字符，已截断）";
         if (text.Length > 4000) text = text[..4000] + $"…（共 {text.Length} 字符）";
         return text.Length == 0 ? "（空文件）" : text;
     }
@@ -287,77 +308,75 @@ public sealed class FileSystemPlugin : IBotPlugin
 
     private async Task<string> WriteCoreAsync(string[] p, bool append)
     {
-        var path = SafePath(p[0]);
-        if (path is null) return Reject(p[0]);
+        if (!TryU(p[0], out var path)) return Reject(p[0]);
         // 允许调用方（如 AI 工具）用字面 \n 传多行内容：此处还原为真实换行
         var content = p[1].Replace("\\n", "\n");
         if (content.Length > _maxFileKb * 1024) return $"拒绝：内容超过单文件上限 {_maxFileKb}KB";
         var cur = TotalSize();
         if (cur + content.Length > _maxTotalMb * 1024 * 1024)
             return $"拒绝：沙箱总容量已达 {_maxTotalMb}MB 上限";
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        if (append) await File.AppendAllTextAsync(path, content);
-        else await File.WriteAllTextAsync(path, content);
-        return $"{(append ? "已追加" : "已写入")} {Rel(path)}（{content.Length} 字符）";
+        CreateParents(path);
+        if (append) _sb!.Fs.AppendAllText(path, content);
+        else _sb!.Fs.WriteAllText(path, content);
+        return $"{(append ? "已追加" : "已写入")} {RelU(path)}（{content.Length} 字符）";
     }
 
     private async Task<string> ListAsync(string[] p)
     {
-        var dir = p.Length > 0 && p[0].Length > 0 ? SafePath(p[0]) : _root;
-        if (dir is null) return Reject(p[0]);
-        if (!Directory.Exists(dir)) return $"目录不存在: {p[0]}";
-        var sb = new StringBuilder($"[{Rel(dir)}]\n");
-        foreach (var d in Directory.GetDirectories(dir).OrderBy(x => x))
+        UPath dir;
+        if (p.Length > 0 && p[0].Length > 0)
         {
-            var info = new DirectoryInfo(d);
-            sb.AppendLine($"📁 {info.Name}/");
+            if (!TryU(p[0], out dir)) return Reject(p[0]);
         }
-        foreach (var f in Directory.GetFiles(dir).OrderBy(x => x))
+        else
         {
-            var info = new FileInfo(f);
-            sb.AppendLine($"📄 {info.Name}  ({info.Length}B {info.LastWriteTime:MM-dd HH:mm})");
+            if (_sb is null) return Reject("");
+            dir = UPath.Root;
         }
+        if (!_sb!.Fs.DirectoryExists(dir)) return $"目录不存在: {(p.Length > 0 ? p[0] : "")}";
+        var sb = new StringBuilder($"[{RelU(dir)}]\n");
+        foreach (var d in _sb.Fs.EnumeratePaths(dir, "*", SearchOption.TopDirectoryOnly, SearchTarget.Directory).OrderBy(x => x.FullName))
+            sb.AppendLine($"📁 {d.GetName()}/");
+        foreach (var fl in _sb.Fs.EnumeratePaths(dir, "*", SearchOption.TopDirectoryOnly, SearchTarget.File).OrderBy(x => x.FullName))
+            sb.AppendLine($"📄 {fl.GetName()}  ({_sb.Fs.GetFileLength(fl)}B {_sb.Fs.GetLastWriteTime(fl):MM-dd HH:mm})");
         var s = sb.ToString().TrimEnd();
         return s.Length == 0 ? "（空目录）" : s;
     }
 
     private Task<string> DeleteAsync(string[] p)
     {
-        var path = SafePath(p[0]);
-        if (path is null) return Task.FromResult(Reject(p[0]));
-        if (File.Exists(path)) { File.Delete(path); return Task.FromResult($"已删除文件 {Rel(path)}"); }
-        if (Directory.Exists(path))
+        if (!TryU(p[0], out var path)) return Task.FromResult(Reject(p[0]));
+        if (_sb!.Fs.FileExists(path)) { _sb.Fs.DeleteFile(path); return Task.FromResult($"已删除文件 {RelU(path)}"); }
+        if (_sb.Fs.DirectoryExists(path))
         {
-            if (Directory.GetFileSystemEntries(path).Length > 0)
+            if (_sb.Fs.EnumeratePaths(path, "*", SearchOption.TopDirectoryOnly, SearchTarget.Both).Any())
                 return Task.FromResult("目录非空，拒绝删除（先清空或用 fs_delete 逐个删文件）");
-            Directory.Delete(path);
-            return Task.FromResult($"已删除空目录 {Rel(path)}");
+            _sb.Fs.DeleteDirectory(path, false);
+            return Task.FromResult($"已删除空目录 {RelU(path)}");
         }
         return Task.FromResult($"不存在: {p[0]}");
     }
 
     private Task<string> MkdirAsync(string[] p)
     {
-        var path = SafePath(p[0]);
-        if (path is null) return Task.FromResult(Reject(p[0]));
-        Directory.CreateDirectory(path);
-        return Task.FromResult($"已创建目录 {Rel(path)}");
+        if (!TryU(p[0], out var path)) return Task.FromResult(Reject(p[0]));
+        _sb!.Fs.CreateDirectory(path);
+        return Task.FromResult($"已创建目录 {RelU(path)}");
     }
 
     private Task<string> InfoAsync(string[] p)
     {
-        var path = SafePath(p[0]);
-        if (path is null) return Task.FromResult(Reject(p[0]));
-        if (File.Exists(path))
+        if (!TryU(p[0], out var path)) return Task.FromResult(Reject(p[0]));
+        if (_sb!.Fs.FileExists(path))
         {
-            var f = new FileInfo(path);
-            return Task.FromResult($"{Rel(path)}\n类型: 文件  大小: {f.Length}B\n创建: {f.CreationTime:yyyy-MM-dd HH:mm:ss}  修改: {f.LastWriteTime:yyyy-MM-dd HH:mm:ss}");
+            var len = _sb.Fs.GetFileLength(path);
+            var w = _sb.Fs.GetLastWriteTime(path);
+            return Task.FromResult($"{RelU(path)}\n类型: 文件  大小: {len}B\n修改: {w:yyyy-MM-dd HH:mm:ss}");
         }
-        if (Directory.Exists(path))
+        if (_sb.Fs.DirectoryExists(path))
         {
-            var d = new DirectoryInfo(path);
-            var files = Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).ToList();
-            return Task.FromResult($"{Rel(path)}\n类型: 目录  子项: {files.Count} 文件  总大小: {files.Sum(x => new FileInfo(x).Length)}B\n创建: {d.CreationTime:yyyy-MM-dd HH:mm:ss}");
+            var files = _sb.Fs.EnumeratePaths(path, "*", SearchOption.AllDirectories, SearchTarget.File).ToList();
+            return Task.FromResult($"{RelU(path)}\n类型: 目录  子项: {files.Count} 文件  总大小: {files.Sum(x => _sb.Fs.GetFileLength(x))}B");
         }
         return Task.FromResult($"不存在: {p[0]}");
     }
@@ -365,31 +384,28 @@ public sealed class FileSystemPlugin : IBotPlugin
     private async Task<string> DownloadAsync(string[] p)
     {
         var url = p[0];
-        var path = SafePath(p[1]);
-        if (path is null) return Reject(p[1]);
+        if (!TryU(p[1], out var path)) return Reject(p[1]);
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
             return "URL 无效（需 http(s):// 开头）";
         var bytes = await _ctx.Http.Client.GetByteArrayAsync(uri);
-        if (bytes.Length > _maxFileKb * 1024) return $"拒绝：下载内容 {_maxFileKb * 1024 / bytes.Length}x 超过单文件上限 {_maxFileKb}KB";
+        if (bytes.Length > _maxFileKb * 1024) return $"拒绝：下载内容 {bytes.Length / 1024}KB 超过单文件上限 {_maxFileKb}KB";
         if (TotalSize() + bytes.Length > _maxTotalMb * 1024 * 1024)
             return $"拒绝：沙箱总容量已达 {_maxTotalMb}MB 上限";
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await File.WriteAllBytesAsync(path, bytes);
-        return $"已下载 {bytes.Length / 1024.0:F1}KB → {Rel(path)}";
+        CreateParents(path);
+        _sb!.Fs.WriteAllBytes(path, bytes);
+        return $"已下载 {bytes.Length / 1024.0:F1}KB → {RelU(path)}";
     }
 
     private Task<string> MoveAsync(string[] p)
     {
-        var from = SafePath(p[0]);
-        var to = SafePath(p[1]);
-        if (from is null) return Task.FromResult(Reject(p[0]));
-        if (to is null) return Task.FromResult(Reject(p[1]));
-        if (!File.Exists(from) && !Directory.Exists(from)) return Task.FromResult($"不存在: {p[0]}");
-        Directory.CreateDirectory(Path.GetDirectoryName(to)!);
-        if (File.Exists(to) || Directory.Exists(to)) return Task.FromResult($"目标已存在: {p[1]}");
-        if (File.Exists(from)) File.Move(from, to);
-        else Directory.Move(from, to);
-        return Task.FromResult($"已移动 {Rel(from)} → {Rel(to)}");
+        if (!TryU(p[0], out var from)) return Task.FromResult(Reject(p[0]));
+        if (!TryU(p[1], out var to)) return Task.FromResult(Reject(p[1]));
+        if (!_sb!.Fs.FileExists(from) && !_sb.Fs.DirectoryExists(from)) return Task.FromResult($"不存在: {p[0]}");
+        CreateParents(to);
+        if (_sb.Fs.FileExists(to) || _sb.Fs.DirectoryExists(to)) return Task.FromResult($"目标已存在: {p[1]}");
+        if (_sb.Fs.FileExists(from)) _sb.Fs.MoveFile(from, to);
+        else _sb.Fs.MoveDirectory(from, to);
+        return Task.FromResult($"已移动 {RelU(from)} → {RelU(to)}");
     }
 
     // ---------------- 搜索 / 替换（供 AI 迭代修改代码用） ----------------
@@ -460,29 +476,23 @@ public sealed class FileSystemPlugin : IBotPlugin
     // 两者共用一套"目标文件枚举"：支持单文件或整目录、--glob 过滤、跳过 .shadow、跳过二进制与超大文件。
 
     /// <summary>枚举待处理文件（目录则递归）；glob 为空表示全部文件</summary>
-    private IEnumerable<string> EnumerateTargets(string target, string? glob)
+    private IEnumerable<UPath> EnumerateTargets(UPath target, string? glob)
     {
-        if (File.Exists(target)) return [target];
-        var opts = new EnumerationOptions
-        {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            AttributesToSkip = FileAttributes.ReparsePoint,
-        };
-        return Directory.EnumerateFiles(target, string.IsNullOrWhiteSpace(glob) ? "*" : glob, opts)
-                        .Where(f => !f.Contains(".shadow"));
+        if (_sb!.Fs.FileExists(target)) return [target];
+        // 注：Zio 的 EnumeratePaths 没有老 EnumerationOptions.ReparsePoint 跳过参数，
+        // 沙箱内容全部经本插件写入（不允许创建链接），语义等价。
+        return _sb.Fs.EnumeratePaths(target, string.IsNullOrWhiteSpace(glob) ? "*" : glob,
+                                     SearchOption.AllDirectories, SearchTarget.File)
+                   .Where(f2 => !f2.FullName.Contains(".shadow"));
     }
 
-    /// <summary>看前 4KB 有没有 NUL 字节判断二进制（避免把图片/压缩包当文本处理）</summary>
-    private static bool LooksBinary(string path)
+    /// <summary>沙箱内文件的二进制判定（读文本判 NUL；读不到按二进制处理，避免误当文本改写）</summary>
+    private bool LooksBinary(UPath path)
     {
         try
         {
-            using var fs = File.OpenRead(path);
-            var buf = new byte[4096];
-            var n = fs.Read(buf, 0, buf.Length);
-            for (var i = 0; i < n; i++) if (buf[i] == 0) return true;
-            return false;
+            var text = _sb!.Fs.ReadAllText(path);
+            return text.Contains(((char)0).ToString());
         }
         catch { return true; }
     }
@@ -490,9 +500,9 @@ public sealed class FileSystemPlugin : IBotPlugin
     private async Task<string> SearchAsync(string[] p)
     {
         // p[0] = 文件或目录，p[1] = 正则，其余为选项
-        var target = SafePath(p[0]);
-        if (target is null) return Reject(p[0]);
-        if (!File.Exists(target) && !Directory.Exists(target)) return $"不存在: {p[0]}";
+        if (!TryU(p[0], out var target)) return Reject(p[0]);
+        
+        if (!_sb!.Fs.FileExists(target) && !_sb.Fs.DirectoryExists(target)) return $"不存在: {p[0]}";
 
         string? glob = null;
         var ignoreCase = false;
@@ -520,12 +530,12 @@ public sealed class FileSystemPlugin : IBotPlugin
         foreach (var f in EnumerateTargets(target, glob))
         {
             if (hits >= limit) break;
-            try { if (new FileInfo(f).Length > _maxFileKb * 1024) continue; } catch { continue; }
+            try { if (_sb.Fs.GetFileLength(f) > _maxFileKb * 1024) continue; } catch { continue; }
             if (LooksBinary(f)) continue;
             scanned++;
 
             string text;
-            try { text = await File.ReadAllTextAsync(f); } catch { continue; }
+            try { text = _sb.Fs.ReadAllText(f); } catch { continue; }
             var lines = text.Split('\n');
             var here = 0;
             for (var i = 0; i < lines.Length && hits < limit; i++)
@@ -539,16 +549,16 @@ public sealed class FileSystemPlugin : IBotPlugin
                 if (context > 0)
                 {
                     var from = Math.Max(0, i - context);
-                    for (var k = from; k < i; k++) sb.AppendLine($"  {Rel(f)}:{k + 1}- {Clip(lines[k])}");
+                    for (var k = from; k < i; k++) sb.AppendLine($"  {RelU(f)}:{k + 1}- {Clip(lines[k])}");
                 }
-                sb.AppendLine($"{Rel(f)}:{i + 1}: {Clip(lines[i])}");
+                sb.AppendLine($"{RelU(f)}:{i + 1}: {Clip(lines[i])}");
                 if (context > 0)
                 {
                     var to = Math.Min(lines.Length - 1, i + context);
-                    for (var k = i + 1; k <= to; k++) sb.AppendLine($"  {Rel(f)}:{k + 1}- {Clip(lines[k])}");
+                    for (var k = i + 1; k <= to; k++) sb.AppendLine($"  {RelU(f)}:{k + 1}- {Clip(lines[k])}");
                 }
             }
-            if (here > 0) fileHits.Add($"{Rel(f)}({here})");
+            if (here > 0) fileHits.Add($"{RelU(f)}({here})");
         }
 
         if (filesOnly)
@@ -571,9 +581,9 @@ public sealed class FileSystemPlugin : IBotPlugin
     {
         // p[0] = 文件或目录，p[1] = 正则，p[2] = 替换串（支持 $1 等分组引用；字面 \n \t 还原），其余为选项
         // **默认只预览不落盘**：改动文件的高危操作，先看清楚再 --apply。
-        var target = SafePath(p[0]);
-        if (target is null) return Reject(p[0]);
-        if (!File.Exists(target) && !Directory.Exists(target)) return $"不存在: {p[0]}";
+        if (!TryU(p[0], out var target)) return Reject(p[0]);
+        
+        if (!_sb!.Fs.FileExists(target) && !_sb.Fs.DirectoryExists(target)) return $"不存在: {p[0]}";
 
         string? glob = null;
         var ignoreCase = false;
@@ -600,11 +610,11 @@ public sealed class FileSystemPlugin : IBotPlugin
 
         foreach (var f in EnumerateTargets(target, glob))
         {
-            try { if (new FileInfo(f).Length > _maxFileKb * 1024) { skipped++; continue; } } catch { skipped++; continue; }
+            try { if (_sb.Fs.GetFileLength(f) > _maxFileKb * 1024) { skipped++; continue; } } catch { skipped++; continue; }
             if (LooksBinary(f)) { skipped++; continue; }
 
             string text;
-            try { text = await File.ReadAllTextAsync(f); } catch { skipped++; continue; }
+            try { text = _sb.Fs.ReadAllText(f); } catch { skipped++; continue; }
             var m = rx.Matches(text);
             if (m.Count == 0) continue;
             var newText = rx.Replace(text, replacement);
@@ -612,7 +622,7 @@ public sealed class FileSystemPlugin : IBotPlugin
             if (newText.Length > _maxFileKb * 1024)
             {
                 skipped++;
-                report.Add($"跳过 {Rel(f)}：替换后超过单文件上限 {_maxFileKb}KB");
+                report.Add($"跳过 {RelU(f)}：替换后超过单文件上限 {_maxFileKb}KB");
                 continue;
             }
 
@@ -620,7 +630,7 @@ public sealed class FileSystemPlugin : IBotPlugin
             {
                 filesChanged++;
                 totalHits += m.Count;
-                report.Add($"将改 {Rel(f)}：{m.Count} 处");
+                report.Add($"将改 {RelU(f)}：{m.Count} 处");
                 continue;
             }
 
@@ -628,15 +638,15 @@ public sealed class FileSystemPlugin : IBotPlugin
             {
                 if (backup)
                 {
-                    var bak = f + ".bak";
-                    if (!File.Exists(bak)) File.Copy(f, bak, false);
+                    var bak = (UPath)(f.FullName + ".bak");
+                    if (!_sb.Fs.FileExists(bak)) _sb.Fs.CopyFile(f, bak, false);
                 }
-                await File.WriteAllTextAsync(f, newText);
+                _sb.Fs.WriteAllText(f, newText);
                 filesChanged++;
                 totalHits += m.Count;
-                report.Add($"已改 {Rel(f)}：{m.Count} 处{(backup ? "（已备份 .bak）" : "")}");
+                report.Add($"已改 {RelU(f)}：{m.Count} 处{(backup ? "（已备份 .bak）" : "")}");
             }
-            catch (Exception ex) { report.Add($"失败 {Rel(f)}：{ex.Message}"); skipped++; }
+            catch (Exception ex) { report.Add($"失败 {RelU(f)}：{ex.Message}"); skipped++; }
         }
 
         if (filesChanged == 0)

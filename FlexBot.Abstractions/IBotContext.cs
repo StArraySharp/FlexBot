@@ -61,6 +61,9 @@ public interface IBotContext : IDisposable
     IHistoryStore History { get; }
     /// <summary>AI 用量上报口（宿主落库；插件把每次调用的 token/耗时报上来即可）。</summary>
     IUsageSink Usage { get; }
+
+    /// <summary>长期记忆条目存储口（宿主落库；scope 必须来自当前回合）。</summary>
+    IMemoryNotes Notes { get; }
 }
 
 public interface ILog

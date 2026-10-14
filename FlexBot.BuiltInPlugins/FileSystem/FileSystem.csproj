@@ -24,4 +24,8 @@
     <Delete Files="@(HostDup)" ContinueOnError="true" />
     <RemoveDir Directories="$(OutDir)runtimes" ContinueOnError="true" />
   </Target>
+  <ItemGroup>
+    <!-- 虚拟文件系统：SubFileSystem 提供结构化沙箱。0.24.0 >= 0.22.2，含 GHSA-h39g-6x3c-7fq9 修复 -->
+    <PackageReference Include="Zio" Version="0.24.0" />
+  </ItemGroup>
 </Project>

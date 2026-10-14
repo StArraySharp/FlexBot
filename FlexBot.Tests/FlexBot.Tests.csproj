@@ -20,4 +20,7 @@
     <ProjectReference Include="..\FlexBot.OfficialBot\FlexBot.OfficialBot.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\FlexBot.BuiltInPlugins\FileSystem\FileSystem.csproj" />
+  </ItemGroup>
 </Project>
