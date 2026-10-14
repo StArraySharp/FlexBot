@@ -69,6 +69,8 @@ sealed class MessageStore : IDisposable
           UNIQUE(transport, scope, message_id, ts)
         );
         CREATE INDEX IF NOT EXISTS idx_msg_scope_ts ON msg(scope, ts);
+        -- 检索索引：contentless FTS5，只存二元切分后的文本（中文 2 字词也能命中；trigram 要求 ≥3 字，不适用）
+        CREATE VIRTUAL TABLE IF NOT EXISTS msg_fts USING fts5(seg, content='');
         """;
 
     private SqliteConnection Open()
@@ -91,6 +93,7 @@ sealed class MessageStore : IDisposable
             cmd.CommandText = Schema;
             cmd.ExecuteNonQuery();
         }
+        BackfillIndex();
         // 迁移：P1 早先的库没有 dir 列（那时只记入站）
         try
         {
@@ -201,12 +204,19 @@ sealed class MessageStore : IDisposable
         var pn = cmd.Parameters.Add("$n", SqliteType.Text);
         var px = cmd.Parameters.Add("$x", SqliteType.Text);
         var pr = cmd.Parameters.Add("$r", SqliteType.Text);
+        // FTS 索引与正文同事务维护：INSERT OR IGNORE 被唯一键挡掉时 changes() 为 0，索引也不会多写
+        using var fts = conn.CreateCommand();
+        fts.Transaction = tx;
+        fts.CommandText = "INSERT INTO msg_fts(rowid, seg) SELECT last_insert_rowid(), $g WHERE changes() > 0";
+        var pg = fts.Parameters.Add("$g", SqliteType.Text);
+
         var inserted = 0;
         foreach (var row in batch)
         {
             pt.Value = row.Transport; ps.Value = row.Scope; pd.Value = row.Dir; pm.Value = row.MessageId;
             pts.Value = row.Timestamp; pu.Value = row.UserId; pn.Value = row.Nick; px.Value = row.Text; pr.Value = row.Raw;
             inserted += cmd.ExecuteNonQuery();
+            if (inserted > 0) { pg.Value = Segment(row.Text); fts.ExecuteNonQuery(); }
         }
         tx.Commit();
         if (inserted > 0) Console.WriteLine($"[history] 落库 {inserted} 条（队列剩余 {_queue.Count}）");
@@ -313,6 +323,136 @@ sealed class MessageStore : IDisposable
         return list;
     }
 
+
+    // ---------------- 检索：二元切分 + FTS5（P2） ----------------
+
+    /// <summary>
+    /// 中文按二元切分（重叠 bigram）、ASCII 按词 —— 不依赖任何分词器。
+    /// 为什么不用 FTS5 的 trigram：它要求查询至少 3 个字符，而中文常用词多是 2 字（"基金""投资"），
+    /// 直接搜不到；bigram 方案对 2 字词同样有效。
+    /// </summary>
+    internal static string Segment(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        var sb = new System.Text.StringBuilder();
+        var cjk = new System.Text.StringBuilder();
+        void Flush()
+        {
+            var run = cjk.ToString();
+            cjk.Clear();
+            if (run.Length == 0) return;
+            if (run.Length == 1) { sb.Append(run).Append(' '); return; }
+            for (var i = 0; i + 1 < run.Length; i++) sb.Append(run[i]).Append(run[i + 1]).Append(' ');
+        }
+        foreach (var ch in s)
+        {
+            if (ch >= 0x4E00 && ch <= 0x9FFF) { cjk.Append(ch); continue; }
+            Flush();
+            sb.Append(char.IsLetterOrDigit(ch) ? char.ToLowerInvariant(ch) : ' ');
+        }
+        Flush();
+        return sb.ToString();
+    }
+
+    /// <summary>把查询串转成 FTS 表达式（多个片段用 AND 连接）</summary>
+    private static string ToMatchQuery(string query)
+    {
+        var parts = Segment(query).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 0 ? "" : string.Join(" AND ", parts);
+    }
+
+    /// <summary>为还没有索引的行补建 FTS（首次引入检索、或库是从 P1 升上来的）</summary>
+    private void BackfillIndex()
+    {
+        try
+        {
+            using var conn = Open();
+            long indexed;
+            using (var c = conn.CreateCommand()) { c.CommandText = "SELECT COUNT(*) FROM msg_fts"; indexed = Convert.ToInt64(c.ExecuteScalar() ?? 0L); }
+            long total;
+            using (var c = conn.CreateCommand()) { c.CommandText = "SELECT COUNT(*) FROM msg"; total = Convert.ToInt64(c.ExecuteScalar() ?? 0L); }
+            if (indexed >= total) return;
+
+            var rows = new List<(long Id, string Text)>();
+            using (var c = conn.CreateCommand())
+            {
+                c.CommandText = "SELECT m.id, m.text FROM msg m WHERE m.id NOT IN (SELECT rowid FROM msg_fts)";
+                using var r = c.ExecuteReader();
+                while (r.Read()) rows.Add((r.GetInt64(0), r.GetString(1)));
+            }
+            if (rows.Count == 0) return;
+
+            using var tx = conn.BeginTransaction();
+            using var ins = conn.CreateCommand();
+            ins.Transaction = tx;
+            ins.CommandText = "INSERT INTO msg_fts(rowid, seg) VALUES($id, $g)";
+            var pid = ins.Parameters.Add("$id", SqliteType.Integer);
+            var pg = ins.Parameters.Add("$g", SqliteType.Text);
+            foreach (var (id, text) in rows) { pid.Value = id; pg.Value = Segment(text); ins.ExecuteNonQuery(); }
+            tx.Commit();
+            Console.WriteLine($"[history] 已为 {rows.Count} 条历史消息补建检索索引");
+        }
+        catch (Exception ex) { Console.WriteLine($"[history] 建索引失败: {ex.Message}"); }
+    }
+
+    /// <summary>在指定 scope 内检索（scope 由宿主强制，调用方无法扩大范围）</summary>
+    public List<HistoryRow> Search(string scope, string query, int limit)
+    {
+        var list = new List<HistoryRow>();
+        var match = ToMatchQuery(query);
+        if (match.Length == 0) return list;
+        try
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT m.ts, m.dir, m.user_id, m.nick, m.text, m.recalled
+                FROM msg_fts f JOIN msg m ON m.id = f.rowid
+                WHERE msg_fts MATCH $q AND m.scope = $s
+                ORDER BY rank LIMIT $n
+                """;
+            cmd.Parameters.AddWithValue("$q", match);
+            cmd.Parameters.AddWithValue("$s", scope);
+            cmd.Parameters.AddWithValue("$n", Math.Clamp(limit, 1, 200));
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new HistoryRow(
+                    DateTimeOffset.FromUnixTimeSeconds(r.GetInt64(0)).ToLocalTime().ToString("MM-dd HH:mm:ss"),
+                    r.GetString(1), r.GetInt64(2), r.GetString(3), r.GetString(4), r.GetInt64(5) != 0));
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[history] 检索失败: {ex.Message}"); }
+        return list;
+    }
+
+    /// <summary>某 scope 最新一条消息之前（不含）的若干条 —— 供"重启后补上下文"用</summary>
+    public List<HistoryRow> Before(string scope, long beforeTs, int limit)
+    {
+        var list = new List<HistoryRow>();
+        try
+        {
+            using var conn = Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT ts, dir, user_id, nick, text, recalled FROM msg
+                WHERE scope = $s AND ts < $t ORDER BY ts DESC, id DESC LIMIT $n
+                """;
+            cmd.Parameters.AddWithValue("$s", scope);
+            cmd.Parameters.AddWithValue("$t", beforeTs);
+            cmd.Parameters.AddWithValue("$n", Math.Clamp(limit, 1, 200));
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new HistoryRow(
+                    DateTimeOffset.FromUnixTimeSeconds(r.GetInt64(0)).ToLocalTime().ToString("MM-dd HH:mm"),
+                    r.GetString(1), r.GetInt64(2), r.GetString(3), r.GetString(4), r.GetInt64(5) != 0));
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[history] 读取更早消息失败: {ex.Message}"); }
+        list.Reverse();
+        return list;
+    }
     // ---------------- 保留期清理 ----------------
 
     /// <summary>按保留期删除过期消息，返回删除条数。启动时与周期任务各调一次。</summary>

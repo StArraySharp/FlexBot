@@ -137,6 +137,10 @@ sealed class BotContextImpl : IBotContext
     private static readonly ICompilerService SharedCompiler = new HostCompilerService();
     public ICompilerService Compiler => SharedCompiler;
 
+    // 历史库（P2）：只读；全进程共享一个实现，无状态
+    private static readonly IHistoryStore SharedHistory = new HistoryStoreAccess();
+    public IHistoryStore History => SharedHistory;
+
     public BotContextImpl(string pluginName, IBotApi api, IBotConfig config, string pluginDir, string dataDir, MessageRouter messages, EventRouter events, Dictionary<string, JsonElement> pluginSettings, PluginManager manager)
     {
         _pluginName = pluginName;

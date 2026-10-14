@@ -53,6 +53,12 @@ public interface IBotContext : IDisposable
 
     /// <summary>当前全部已注册命令（供 AI/插件发现可用能力）。</summary>
     IReadOnlyList<CommandInfo> ListCommands();
+
+    /// <summary>
+    /// 只读历史消息库（宿主落库的群/私聊消息）。宿主未启用落库时 <see cref="IHistoryStore.Enabled"/> 为 false。
+    /// **scope 必须来自当前回合的真实上下文**，不要用模型/用户给的字符串拼 scope。
+    /// </summary>
+    IHistoryStore History { get; }
 }
 
 public interface ILog

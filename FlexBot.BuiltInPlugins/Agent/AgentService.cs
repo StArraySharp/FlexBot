@@ -208,6 +208,26 @@ class AgentService
             }
             catch (Exception ex) { Console.WriteLine($"[mem] read summary failed: {ex.Message}"); }
 
+            // 失忆修复：宿主重启会清空内存里的会话窗口（实测它因此说"再往前的记录我这边没有留存"）。
+            // 只在内存窗口为空时，从历史库补一段最近记录；正常对话时不注入，避免与窗口内容重复。
+            try
+            {
+                var warm = _convHist.TryGetValue(key, out var warmHist) && warmHist.Count > 0;
+                if (!warm && _ctx.History is { Enabled: true } history)
+                {
+                    var scope = groupId > 0 ? $"group:{groupId}" : $"private:{callerUin}";
+                    var older = history.Recent(scope, 15);
+                    if (older.Count > 0)
+                    {
+                        var sb = new System.Text.StringBuilder();
+                        foreach (var m in older) sb.AppendLine($"{m.Time} {(m.Dir == "out" ? "我" : m.Nick + "(" + m.UserId + ")")}: {m.Text}");
+                        baseCtx = $"【本次对话之前的消息（来自历史库，供参考）】\n{sb.ToString().TrimEnd()}\n\n{baseCtx}";
+                        Console.WriteLine($"[ai] 会话窗口为空，已从历史库补 {older.Count} 条上下文（{scope}）");
+                    }
+                }
+            }
+            catch (Exception ex) { Console.WriteLine($"[ai] 补历史上下文失败: {ex.Message}"); }
+
             var text = $"{baseCtx}\n\n用户消息: {prompt}";
 
             Console.WriteLine($"[ai] caller={callerUin} group={groupId} prompt: {prompt} images={imageParts?.Count ?? 0}");

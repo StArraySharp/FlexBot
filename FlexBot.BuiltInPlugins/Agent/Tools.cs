@@ -61,6 +61,32 @@ class BotTools(IBotContext ctx)
     // 所以这里判的是管理员级权限 —— 命名与描述都不要再写成 owner
     private bool IsAdmin => _cfg.AdminUins.Contains(CurrentCallerUin);
 
+
+    // ---------------- 历史消息（宿主消息库，P2） ----------------
+    // 关键安全点：scope **由宿主从当前回合取**，不接受模型传参 —— 否则一句提示注入就能读到别人的私聊。
+
+    private static string CurrentScope()
+        => CurrentTurn.Value is { } t && t.GroupId > 0 ? $"group:{t.GroupId}" : $"private:{CurrentTurn.Value?.CallerUin ?? 0}";
+
+    private static string FmtHistory(IReadOnlyList<HistoryMessage> list)
+        => string.Join("\n", list.Select(m => $"{m.Time} {(m.Dir == "out" ? "我" : m.Nick + "(" + m.UserId + ")")}: {m.Text}"));
+
+    [Description("查看当前会话最近的历史消息。用户问\"之前聊过什么/我发过什么消息\"时用。仅限当前会话，看不到别人的私聊。")]
+    private string RecallRecent([Description("条数，默认 20，最多 100")] int limit = 20)
+    {
+        if (ctx.History is not { Enabled: true } h) return "宿主未启用历史消息库。";
+        var list = h.Recent(CurrentScope(), Math.Clamp(limit, 1, 100));
+        return list.Count == 0 ? "当前会话没有历史消息。" : FmtHistory(list);
+    }
+
+    [Description("在当前会话的历史消息里按关键词检索。中文两字词也可（如 基金、投资）。仅限当前会话。")]
+    private string RecallSearch([Description("关键词")] string query, [Description("最多返回几条，默认 10")] int limit = 10)
+    {
+        if (ctx.History is not { Enabled: true } h) return "宿主未启用历史消息库。";
+        if (string.IsNullOrWhiteSpace(query)) return "关键词不能为空。";
+        var list = h.Search(CurrentScope(), query, Math.Clamp(limit, 1, 50));
+        return list.Count == 0 ? $"没找到包含「{query}」的历史消息。" : FmtHistory(list);
+    }
     public List<AITool> CreateAll()
     {
         List<AITool> tools =
@@ -70,6 +96,8 @@ class BotTools(IBotContext ctx)
             AIFunctionFactory.Create(GetCurrentTime, name: "get_current_time", description: "获取当前日期时间"),
             AIFunctionFactory.Create(GetWeather, name: "get_weather", description: "查询指定城市的实时天气（温度、体感、天气状况、湿度、风速），查天气直接用这个，不要用搜索"),
             AIFunctionFactory.Create(GetCurrentGroup, name: "get_current_group", description: "获取当前对话所在群号"),
+            AIFunctionFactory.Create(RecallRecent, name: "history_recent", description: "查看当前会话最近的历史消息（来自宿主消息库，能跨机器人重启；用户问\"之前聊过什么/我发过什么\"时用它）"),
+            AIFunctionFactory.Create(RecallSearch, name: "history_search", description: "在当前会话的历史消息里按关键词检索（中文两字词也可，例如 基金/投资）"),
             AIFunctionFactory.Create(GetGroupMembers, name: "get_group_members", description: "获取当前群成员列表"),
             AIFunctionFactory.Create(FindMemberByName, name: "find_member", description: "按昵称/群名片查找当前群成员（不区分大小写）"),
             AIFunctionFactory.Create(SaveMemory, name: "save_memory", description: "保存长期记忆到本地 Markdown 文件"),
