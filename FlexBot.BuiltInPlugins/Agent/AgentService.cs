@@ -353,12 +353,29 @@ class AgentService
         if (left > 0) Console.WriteLine($"[ai] 卸载时仍有 {left} 个在途请求未完成（已等待 {timeout.TotalSeconds:F0}s）");
     }
 
+    // ---- AI 用量记录（对照 AstrBot 的 provider_stats）----
+    private void RecordUsage(UsageDetails? usage, System.Diagnostics.Stopwatch sw)
+    {
+        try
+        {
+            var model = _ctx.GetSetting("Model", _cfg.Model);
+            _ctx.Usage.Record(
+                "default", model,
+                usage?.InputTokenCount ?? 0,
+                usage?.OutputTokenCount ?? 0,
+                usage?.CachedInputTokenCount ?? 0,
+                sw.ElapsedMilliseconds);
+        }
+        catch (Exception ex) { Console.WriteLine($"[usage] 记录失败: {ex.Message}"); }
+    }
     // ===================== 流式运行（实时上报 + 回落兜底） =====================
 
     // 流式主路径：遍历 AgentResponseUpdate，文本增量与工具调用实时回调；失败回落非流式链
     private async Task<(AgentResponse? Resp, string Answer)> RunStreamingWithFallbackAsync(
         List<MCAIChatMessage> messages, StreamEvent onStream)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();   // 本次调用的耗时（用量统计用）
+        UsageDetails? usage = null;
         var sbAnswer = new StringBuilder();
         var sbRound = new StringBuilder();   // 本轮（下一次工具调用之前）的助手文本，供插件工厂审计
         AgentResponse? resp = null;
@@ -381,6 +398,7 @@ class AgentService
                     onStream("tool", $"[{call.Name} {argBrief}]");
                 }
                 // 文本增量
+                foreach (var uc in update.Contents.OfType<UsageContent>()) usage = uc.Details;   // 流式带的用量
                 var txt = update.Text;
                 if (!string.IsNullOrEmpty(txt))
                 {
@@ -391,7 +409,11 @@ class AgentService
             }
             // 流式结束后拿完整响应（含 usage 等；脚手架维护的会话由框架缓存）
             var full = sbAnswer.ToString().Trim();
-            if (full.Length > 0) return (null, full);
+            if (full.Length > 0)
+            {
+                RecordUsage(usage, sw);
+                return (null, full);
+            }
             Console.WriteLine("[ai] 流式无文本输出，回落非流式");
         }
         catch (Exception ex)
@@ -404,7 +426,9 @@ class AgentService
             }
         }
         // 回落：非流式完整链（结果只做返回，不再回调，避免与已推送内容重复）
+        var fallbackSw = System.Diagnostics.Stopwatch.StartNew();
         var (r2, _) = await RunWithFallbackAsync(messages);
+        RecordUsage(r2?.Usage, fallbackSw);
         return (r2, r2.Text?.Trim() ?? "");
     }
 

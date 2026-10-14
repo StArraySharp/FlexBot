@@ -86,9 +86,11 @@ static class WebUi
     CheckAssets();   // 校验静态资源清单与磁盘是否一致
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddSingleton(plugins);
+        builder.Services.AddResponseCompression(o => { o.EnableForHttps = true; o.MimeTypes = ["text/html", "text/css", "application/javascript", "application/json", "image/svg+xml"]; });
         builder.Logging.ClearProviders(); // 不让 ASP.NET 日志污染控制台
         builder.WebHost.UseUrls($"http://{bindAddr}:{port}");
         var app = builder.Build();
+        app.UseResponseCompression();   // 前端资源与 API 响应压缩（文本类，不影响 ETag/304 逻辑）
 
         // 全局异常日志（常驻：500 时不至于无线索）
         app.Use(async (ctx, next) =>

@@ -74,6 +74,7 @@ internal static class Program
                                         Path.Combine(settings.MemoryDir, "watched_groups.txt"));
         msgStore.Transport = client.TransportName;   // 出站记录用真实通道名
         msgStore.Purge();
+        var usageStore = new UsageStore(Path.Combine(settings.MemoryDir, "flexbot.db"));   // AI 用量与消息共库
         _ = Task.Run(async () => { await Task.Delay(TimeSpan.FromSeconds(20)); await BackfillWatchedGroupsAsync(); });
         _ = Task.Run(async () =>
         {

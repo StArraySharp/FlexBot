@@ -140,6 +140,10 @@ sealed class BotContextImpl : IBotContext
     // 历史库（P2）：只读；全进程共享一个实现，无状态
     private static readonly IHistoryStore SharedHistory = new HistoryStoreAccess();
     public IHistoryStore History => SharedHistory;
+    // 用量上报（宿主未启用时用一个空实现，插件无需判空）
+    private sealed class NullUsage : IUsageSink { public void Record(string p, string m, long i, long o, long c, long ms) { } }
+    public IUsageSink Usage => UsageStore.Current ?? (IUsageSink)NullUsageInstance;
+    private static readonly NullUsage NullUsageInstance = new();
 
     public BotContextImpl(string pluginName, IBotApi api, IBotConfig config, string pluginDir, string dataDir, MessageRouter messages, EventRouter events, Dictionary<string, JsonElement> pluginSettings, PluginManager manager)
     {

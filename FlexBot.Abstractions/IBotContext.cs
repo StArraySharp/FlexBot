@@ -59,6 +59,8 @@ public interface IBotContext : IDisposable
     /// **scope 必须来自当前回合的真实上下文**，不要用模型/用户给的字符串拼 scope。
     /// </summary>
     IHistoryStore History { get; }
+    /// <summary>AI 用量上报口（宿主落库；插件把每次调用的 token/耗时报上来即可）。</summary>
+    IUsageSink Usage { get; }
 }
 
 public interface ILog
