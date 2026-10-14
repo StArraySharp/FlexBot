@@ -210,13 +210,37 @@ class BotTools(IBotContext ctx)
     async Task<string> FsInfo([Description("相对路径")] string path) =>
         FsErr(await FsInvoke("fs_info", path));
 
-    [Description("用正则在文件工作区搜索：单文件或目录递搜（.cs/.json/.md/.txt），返回 文件:行号: 内容。改代码前先搜定位目标。")]
-    async Task<string> FsSearch([Description("文件或目录的相对路径")] string path, [Description("正则表达式")] string pattern, [Description("最大返回行数，默认 50")] int limit = 50) =>
-        FsErr(await FsInvoke("fs_search", $"{path} {pattern} {limit}"));
+    [Description("用正则在文件工作区搜索：单文件或目录递归搜任意文本后缀（跳过二进制/超大文件），返回 文件:行号: 内容。改代码/找内容前先搜定位目标。")]
+    async Task<string> FsSearch(
+        [Description("文件或目录的相对路径")] string path,
+        [Description("正则表达式")] string pattern,
+        [Description("最大返回行数，默认 50")] int limit = 50,
+        [Description("只搜匹配该通配的文件，如 *.md；留空=全部")] string? glob = null)
+    {
+        var args = $"{path} {pattern} --limit {Math.Clamp(limit, 1, 500)}";
+        if (!string.IsNullOrWhiteSpace(glob)) args += $" --glob {glob.Trim()}";
+        return FsErr(await FsInvoke("fs_search", args));
+    }
 
-    [Description("用正则替换单文件文本：pattern 命中处换成 replacement（支持 $1 等分组引用，\\n 表示换行）。局部修改代码用它，别整文件重写。")]
-    async Task<string> FsReplace([Description("单文件相对路径")] string path, [Description("正则表达式")] string pattern, [Description("替换串，支持 $1 与 \\n")] string replacement) =>
-        FsErr(await FsInvoke("fs_replace", $"{path} {pattern} {replacement.Replace(" ", "\\s")}"));
+    [Description("用正则替换文件文本（支持整目录）：pattern 命中处换成 replacement（支持 $1 等分组引用，\\n 表示换行）。"
+        + "**默认只预览不落盘**：先调用一次看预览，确认无误后再带 apply=true 重新调用才真正写入。")]
+    async Task<string> FsReplace(
+        [Description("单文件或目录的相对路径")] string path,
+        [Description("正则表达式")] string pattern,
+        [Description("替换串，支持 $1 与 \\n（空格原样保留）")] string replacement,
+        [Description("true 才真正写入；默认 false 仅预览")] bool apply = false,
+        [Description("只处理匹配该通配的文件，如 *.md；留空=全部")] string? glob = null,
+        [Description("忽略大小写")] bool ignoreCase = false,
+        [Description("写入前在同目录留一份 原名.bak")] bool backup = false)
+    {
+        // 替换串原样传：插件侧按位置取（多余空格会被拼回去），不要在这里做任何转义
+        var args = $"{path} {pattern} {replacement}";
+        if (apply) args += " --apply";
+        if (ignoreCase) args += " --ignore-case";
+        if (backup) args += " --backup";
+        if (!string.IsNullOrWhiteSpace(glob)) args += $" --glob {glob.Trim()}";
+        return FsErr(await FsInvoke("fs_replace", args));
+    }
 
     // ---- 联网搜索 ----
     [Description("联网搜索，返回多条搜索结果（标题+摘要+链接）。必须提供 query 搜索关键词；engine 参数可指定搜索引擎：baidu（默认，中文好）、bing（直连快）、duckduckgo（隐私好），可省略。")]

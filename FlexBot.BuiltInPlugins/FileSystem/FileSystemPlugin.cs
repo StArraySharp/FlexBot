@@ -257,12 +257,27 @@ public sealed class FileSystemPlugin : IBotPlugin
 
     private async Task<string> ReadAsync(string[] p)
     {
-        var path = SafePath(p[0]);
-        if (path is null) return Reject(p[0]);
-        if (!File.Exists(path)) return $"文件不存在: {p[0]}";
+        // 这条命令注册为 minParts=1（允许"只给路径"），于是 `fs_read <路径> <上限>` 会把整串塞进 p[0]。
+        // AI 工具包装正是按"<路径> 999999"发的 ⇒ 旧实现把它当文件名，报"文件不存在: <路径> 999999"。
+        // 这里把 p[0] 末尾的纯数字拆出来当上限，两种写法都支持。
+        var raw = p[0];
+        var maxChars = 0;
+        if (p.Length > 1)
+        {
+            _ = int.TryParse(p[1].Trim(), out maxChars);
+        }
+        else
+        {
+            var sp = raw.LastIndexOf(' ');
+            if (sp > 0 && int.TryParse(raw[(sp + 1)..].Trim(), out var tail)) { maxChars = tail; raw = raw[..sp].Trim(); }
+        }
+
+        var path = SafePath(raw);
+        if (path is null) return Reject(raw);
+        if (!File.Exists(path)) return $"文件不存在: {raw}";
         var text = await File.ReadAllTextAsync(path);
-        if (p.Length > 1 && int.TryParse(p[1].Trim(), out var n) && n > 0 && n < text.Length)
-            text = text[..n] + $"…（共 {text.Length} 字符，已截断）";
+        if (maxChars > 0 && maxChars < text.Length)
+            text = text[..maxChars] + $"…（共 {text.Length} 字符，已截断）";
         if (text.Length > 4000) text = text[..4000] + $"…（共 {text.Length} 字符）";
         return text.Length == 0 ? "（空文件）" : text;
     }
