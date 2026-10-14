@@ -38,9 +38,10 @@ static class WebUi
 
     // 登录失败退避表：来源 IP → (连续失败次数, 解禁时刻)。内存态，重启清零。
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (int Count, DateTime Until)> LoginFails = new();
-    // 登录会话 token（重启轮换；认证开启时所有 /api/* 与页面均需携带）
-    private static readonly string SessionToken = Convert.ToHexString(Guid.NewGuid().ToByteArray())
-        .ToLowerInvariant();
+    // 登录会话 token（认证开启时所有 /api/* 与页面均需携带）。
+    // **持久化**：早期实现每次重启都轮换 ⇒ 一部署就把已登录的浏览器踢回登录页，
+    // 表现为"页面突然空了/要求重新登录"。现在优先用配置里的令牌，缺失才生成并保存。
+    private static string SessionToken = "";
 
     /// <summary>是否曾有页面（/ 或 /login）被请求过：窗口模式用来判断 WebView 是否真的导航成功</summary>
     public static volatile bool HasServedPage;
@@ -58,6 +59,14 @@ static class WebUi
             settings.Save();
             Console.WriteLine("[webui] WebUiPassword 已由明文自动转换为 SHA256 存储");
         }
+        // 会话令牌：来自配置则直接沿用（重启不再登出），否则生成一次并落盘（加密存储）
+        if (string.IsNullOrWhiteSpace(settings.WebUiSessionToken))
+        {
+            settings.WebUiSessionToken = Convert.ToHexString(Guid.NewGuid().ToByteArray()).ToLowerInvariant();
+            settings.Save();
+            Console.WriteLine("[webui] 已生成并保存会话令牌：此后重启保留登录状态");
+        }
+        SessionToken = settings.WebUiSessionToken;
         // 首次启动（或密码被清空后）自动生成随机密码：避免"无密码 + 全网卡监听"的裸奔窗口。
         // 明文只写真实控制台，不走 Console.Out（那个被 TimestampWriter 接到日志文件与环形缓冲了）。
         if (!authOn)

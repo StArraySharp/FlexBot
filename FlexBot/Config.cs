@@ -125,6 +125,9 @@ class HostSettings
     /// 留空则首次启动**自动生成随机 16 位密码**并打印在控制台（明文只打印一次、不写日志），因此不存在"无密码开放"的窗口。
     /// 想换密码：WebUI → 设置 → 登录密码。WebUI 绑定 0.0.0.0，不要把端口暴露到公网。</summary>
     public string WebUiPassword { get; set; } = "";
+
+    /// <summary>WebUI 会话令牌（持久化，避免重启把已登录的浏览器踢回登录页；磁盘上加密存储）</summary>
+    public string WebUiSessionToken { get; set; } = "";
     /// <summary>WebUI 界面（卡片/导航）不透明度百分比 0-100，默认 100。</summary>
     public int WebUiUiOpacity { get; set; } = 100;
     /// <summary>WebUI 控件（按钮/输入框/滑条）不透明度百分比 0-100，默认 100。</summary>
@@ -182,6 +185,7 @@ class HostSettings
         // 紧随其后的 Save() 会把明文重新加密写回 ⇒ 旧的明文配置首次启动即自动加密。
         s.Token = SecretBox.Decrypt(s.Token);
         s.OfficialAppSecret = SecretBox.Decrypt(s.OfficialAppSecret);
+        s.WebUiSessionToken = SecretBox.Decrypt(s.WebUiSessionToken);
         foreach (var f in s.FallbackModels) f.ApiKey = SecretBox.Decrypt(f.ApiKey);
         s.NormalizeAccessSettings();
         // 同时移除旧版写入 config.json 的 PluginSettings 字段。
@@ -202,6 +206,7 @@ class HostSettings
             var snapshot = JsonSerializer.Deserialize<HostSettings>(JsonSerializer.Serialize(this)) ?? new HostSettings();
             snapshot.Token = SecretBox.Encrypt(Token);
             snapshot.OfficialAppSecret = SecretBox.Encrypt(OfficialAppSecret);
+        snapshot.WebUiSessionToken = SecretBox.Encrypt(WebUiSessionToken);
             for (var i = 0; i < snapshot.FallbackModels.Count && i < FallbackModels.Count; i++)
                 snapshot.FallbackModels[i].ApiKey = SecretBox.Encrypt(FallbackModels[i].ApiKey);
             File.WriteAllText(FilePath, JsonSerializer.Serialize(snapshot, BotJson.Indented));
