@@ -26,8 +26,48 @@ internal static partial class Program
         // 必须在捕获 Console.Out 之前切 UTF-8：writer 的编码在创建时固定，
         // 之后再改 OutputEncoding 不会影响已捕获的 writer（中文 Windows 默认 GBK 会导致乱码）
         // WinExe 子系统下进程默认没有控制台：--no-gui 时先按需开通，后面的日志才看得到
-        if (args.Contains("--no-gui")) FlexBot.WebUi.ConsoleWindow.EnsureConsole();
+        // 命令行选项：解析集中在 CliOptions（判定顺序：帮助 > 版本 > 冲突 > 未知参数）。
+        // WinExe 子系统下进程默认没有控制台：凡是"要给人看"的调用都先开通，否则输出直接丢进虚空。
+        var cli = CliOptions.Parse(args);
+        if (cli.NeedsConsole) FlexBot.WebUi.ConsoleWindow.EnsureConsole();
         try { Console.OutputEncoding = Encoding.UTF8; } catch { }
+
+        // ---- 帮助 / 版本 / 参数错误：输出后立即退出 ----
+        // 此时日志管道还没建立（下一行的 SetOut），所以这些行不带时间戳前缀，就是给人看的样子。
+        if (cli.Help)
+        {
+            Console.WriteLine(CliOptions.Usage);
+            Environment.ExitCode = 0;
+            return;
+        }
+        if (cli.Version)
+        {
+            Console.WriteLine($"FlexBot {typeof(Program).Assembly.GetName().Version}  ({RuntimeInformation.FrameworkDescription})");
+            Environment.ExitCode = 0;
+            return;
+        }
+        if (cli.Conflict)
+        {
+            Console.WriteLine("参数冲突：--gui 与 --no-gui 不能同时使用（FlexBot --help 查看全部选项）。");
+            Environment.ExitCode = 2;
+            return;
+        }
+        if (cli.Unknown.Count > 0)
+        {
+            Console.WriteLine($"未知参数: {string.Join(" ", cli.Unknown)}（FlexBot --help 查看全部选项）");
+            Environment.ExitCode = 2;
+            return;
+        }
+
+        // --gui 是明确指令：在启动任何东西（单实例、插件、子进程）之前先确认窗口真的能开，
+        // 开不了就立刻失败退出 —— 而不是跑到一半再静默退化成控制台（那样用户会以为自己在看窗口）。
+        if (cli.ForceGui && !AppShell.PreferWindow(out var guiWhy))
+        {
+            Console.WriteLine($"[boot] --gui 指定的原生窗口无法创建：{guiWhy}");
+            Console.WriteLine("[boot] 去掉 --gui 可用控制台 + WebUI 运行：FlexBot --no-gui");
+            Environment.ExitCode = 3;
+            return;
+        }
 
         var _origOut = Console.Out;
         Console.SetOut(new TimestampWriter(_origOut));
@@ -311,8 +351,8 @@ internal static partial class Program
         Console.WriteLine($"[webui] 控制台已就绪: {uiUrl}");
         SingleInstance.WriteOwnerHint(settings.MemoryDir, uiUrl);   // 供重复启动时提示"已在运行的实例"
 
-        // ===================== 启动形态（唯一参数 --no-gui；规则见 FlexBot/WebUi/AppShell.cs）=====================
-        var runMode = AppShell.ResolveMode(args);
+        // ===================== 启动形态（--gui / --no-gui / 默认；判定见 FlexBot/CliOptions.cs 与 WebUi/AppShell.cs）=====================
+        var runMode = AppShell.ResolveMode(cli);
         if (runMode == RunMode.AppWindow && !AppShell.PreferWindow(out var why))
         {
             ConsoleWindow.EnsureConsole();
@@ -330,7 +370,16 @@ internal static partial class Program
                 // 窗口没能渲染（典型：WebView2 环境创建失败）⇒ 退回控制台 + WebUI
                 ConsoleWindow.EnsureConsole();
                 FlexBot.WebUi.AnsiConsole.EnableVirtualTerminal();
-                Console.WriteLine($"[boot] 已退回控制台 + WebUI：请用浏览器打开 {uiUrl}（修好 WebView2 运行时即可恢复原生窗口）");
+                if (cli.ForceGui)
+                {
+                    // --gui 明确要求窗口：创建失败要说清楚，并让退出码反映"没按你要的方式跑起来"
+                    Console.WriteLine($"[boot] --gui 指定的原生窗口创建失败，已退回控制台 + WebUI：{uiUrl}");
+                    Environment.ExitCode = 3;
+                }
+                else
+                {
+                    Console.WriteLine($"[boot] 已退回控制台 + WebUI：请用浏览器打开 {uiUrl}（修好 WebView2 运行时即可恢复原生窗口）");
+                }
             }
         }
 

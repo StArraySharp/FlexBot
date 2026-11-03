@@ -13,7 +13,7 @@ enum RunMode
 }
 
 /// <summary>
-/// 启动形态判定（唯一参数：<c>--no-gui</c>）。
+/// 启动形态判定（参数见 <see cref="FlexBot.CliOptions"/>：<c>--gui</c> / <c>--no-gui</c>）。
 ///
 /// 规则
 ///   默认      → 原生应用窗口（Photino 加载 WebUI 页面），进程用 WinExe 子系统 ⇒ 没有多余的控制台窗口
@@ -26,8 +26,8 @@ enum RunMode
 /// </summary>
 static class AppShell
 {
-    public static RunMode ResolveMode(string[] args) =>
-        args.Contains("--no-gui") ? RunMode.ConsoleOnly : RunMode.AppWindow;
+    public static RunMode ResolveMode(CliOptions cli) =>
+        cli.NoGui ? RunMode.ConsoleOnly : RunMode.AppWindow;
 
     /// <summary>当前环境能否开原生窗口；不能时给出可读原因（写进日志）</summary>
     public static bool PreferWindow(out string reason)
