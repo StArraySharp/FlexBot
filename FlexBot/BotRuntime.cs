@@ -82,7 +82,18 @@ internal sealed class BotRuntime
                     cmdText = $"{prefix}reset group:{e.Message.GroupId}";
 
                 var handled = await _dispatcher.DispatchAsync(cmdText, isAdmin: isGroupAdmin,
-                    r => _api.SendGroupMsgAsync(e.Message.GroupId ?? 0, Msg.Quote(e.Message.MessageId, r)));
+                    r => _api.SendGroupMsgAsync(e.Message.GroupId ?? 0, Msg.Quote(e.Message.MessageId, r)),
+                    // 超长帮助改合并转发：不引用原消息(转发节点里引用无意义)，整段作为一条节点
+                    longText => _api.SendGroupForwardMsgAsync(e.Message.GroupId ?? 0,
+                        [new OneBotLib.Api.ForwardNode
+                        {
+                            UserId = _api.SelfId,
+                            Nickname = "FlexBot 帮助",
+                            Content = new List<OneBotLib.MessageSegment.MessageSegment>
+                            {
+                                OneBotLib.MessageSegment.MessageSegment.Text(longText)
+                            }
+                        }]));
                 if (handled) return; // 命中命令：回复已发，不再给插件（AI）
             }
             await _messages.DispatchGroupAsync(e);
@@ -159,7 +170,18 @@ internal sealed class BotRuntime
                     {
                         Console.WriteLine($"[private→] {m.UserId}: {r.Replace("\n", " ⏎ ")[..Math.Min(200, r.Length)]}");
                         return _client.SendPrivateMsgAsync(m.UserId.Value, Msg.Quote(m.MessageId, r));
-                    }))
+                    },
+                    // 超长帮助改合并转发(私聊)；节点内容为整段帮助文本
+                    longText => _api.SendPrivateForwardMsgAsync(m.UserId.Value,
+                        [new OneBotLib.Api.ForwardNode
+                        {
+                            UserId = _api.SelfId,
+                            Nickname = "FlexBot 帮助",
+                            Content = new List<OneBotLib.MessageSegment.MessageSegment>
+                            {
+                                OneBotLib.MessageSegment.MessageSegment.Text(longText)
+                            }
+                        }])))
                 return;
 
             await _messages.DispatchPrivateAsync(e);
