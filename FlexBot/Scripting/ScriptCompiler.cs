@@ -128,6 +128,7 @@ public static class ScriptCompiler
             {
                 var pe = await File.ReadAllBytesAsync(pePath, ct);
                 var pdb = File.Exists(pdbPath) ? await File.ReadAllBytesAsync(pdbPath, ct) : null;
+                PruneStaleBuilds(cacheDir, name, fingerprint);
                 return new ScriptBuild(true, pe, pdb, "", true);
             }
             catch (Exception ex)
@@ -152,7 +153,39 @@ public static class ScriptCompiler
         {
             Console.WriteLine($"[script] 写入编译缓存失败（忽略）: {ex.Message}");
         }
+        PruneStaleBuilds(cacheDir, name, fingerprint);
         return new ScriptBuild(true, peBytes, pdbBytes, diag, false);
+    }
+
+    /// <summary>
+    /// 清理本插件的旧编译产物。产物按指纹命名，源码或引用集一变就多出一份 ——
+    /// 不清会无限堆积（实测某插件堆到 80 份 / 4.9MB，全仓 411 个文件 / 9.7MB）。
+    ///
+    /// 边界：只删本插件自己的 {name}.{指纹}.dll|.pdb，且**不递归**，
+    /// 因此 .cache/nuget/（NuGet 下载缓存）与其它插件的内容都不会被碰到。
+    /// 只保留当前指纹这一份；删不掉（被占用等）就留给下一轮，不影响加载。
+    /// </summary>
+    private static void PruneStaleBuilds(string cacheDir, string name, string keepFingerprint)
+    {
+        try
+        {
+            if (!Directory.Exists(cacheDir)) return;
+            var prefix = name + ".";
+            var keepPe = $"{name}.{keepFingerprint}.dll";
+            var keepPdb = $"{name}.{keepFingerprint}.pdb";
+            foreach (var file in Directory.EnumerateFiles(cacheDir))
+            {
+                var fn = Path.GetFileName(file);
+                if (!fn.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                var ext = Path.GetExtension(fn);
+                if (!ext.Equals(".dll", StringComparison.OrdinalIgnoreCase) &&
+                    !ext.Equals(".pdb", StringComparison.OrdinalIgnoreCase)) continue;
+                if (fn.Equals(keepPe, StringComparison.OrdinalIgnoreCase) ||
+                    fn.Equals(keepPdb, StringComparison.OrdinalIgnoreCase)) continue;
+                try { File.Delete(file); } catch { /* 下轮再清 */ }
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[script] 清理旧编译产物失败（忽略）: {ex.Message}"); }
     }
 
     /// <summary>
