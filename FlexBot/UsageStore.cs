@@ -158,4 +158,11 @@ sealed class UsageStore : FlexBot.PluginApi.IUsageSink, IDisposable
     }
 
     public void Dispose() => Current = null;
+
+    /// <summary>累计用量(供插件经 IUsageSink.Totals 查询；内部复用 Summary，避免两套口径)</summary>
+    public UsageTotals Totals()
+    {
+        var (calls, inTok, outTok, cached, _, _, _, _) = Summary();
+        return new UsageTotals(calls, inTok, outTok, cached);
+    }
 }

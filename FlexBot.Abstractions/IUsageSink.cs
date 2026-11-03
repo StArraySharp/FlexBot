@@ -11,4 +11,14 @@ public interface IUsageSink
 {
     /// <summary>记录一次 AI 调用（失败也算一次，token 传 0）</summary>
     void Record(string provider, string model, long inputTokens, long outputTokens, long cachedTokens, long elapsedMs);
+
+    /// <summary>
+    /// 累计用量快照(次数/输入/输出/缓存命中 token)。
+    /// 带默认实现：旧实现不必改动即可编译；宿主实现会覆盖它返回真实数据。
+    /// Agent 插件据此算缓存命中率与额度占比，无需触碰宿主内部类型。
+    /// </summary>
+    UsageTotals Totals() => new(0, 0, 0, 0);
 }
+
+/// <summary>累计用量(tokens)。Calls=调用次数，Cached=缓存命中 token。</summary>
+public readonly record struct UsageTotals(long Calls, long InputTokens, long OutputTokens, long CachedTokens);
