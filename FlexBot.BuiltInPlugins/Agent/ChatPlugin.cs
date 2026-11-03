@@ -28,11 +28,15 @@ public sealed class ChatPlugin : IBotPlugin
     // ---- 可配置项（WebUI「插件设置」表单）：模型与人格归属 Agent 插件 ----
     public IReadOnlyList<PluginSettingDef> SettingDefs =>
     [
+        new("QuotaTokens", "token 额度上限", "number", "0", "!agent 查询时显示的额度总量(输入+输出+缓存 token 累计)；0 = 未配置，只显示已用量与缓存命中率"),
         new("GroupChatEnabled", "启用群聊 AI 回复", "bool", "true", "全局开关：关闭后所有群不做 AI 回复（私聊不受影响）；单群粒度用 !nollm"),
-        new("ApiKey", "LLM API Key", "password", "", "OpenAI 兼容服务的密钥"),
-        new("BaseUrl", "LLM Base URL", "text", "https://open.bigmodel.cn/api/paas/v4", "OpenAI 兼容地址（完整 base，含 /v1）"),
-        new("Model", "模型名", "text", "glm-4-flash", "主模型；失败时按备用列表回落"),
-        new("FallbackModels", "备用模型回落链", "models", "[]", "主模型失败时按顺序尝试；每行可独立测试"),
+        // 模型池：主模型与备用回落统一在一个列表里管理（type=modelpool）。
+        // 下面三项仍必须声明 —— 它们是模型池的存储位置（主模型存 Model/BaseUrl/ApiKey，
+        // 其余存 FallbackModels），由 WebUI 的模型池控件写回；不声明就会被 UpdateSettingsAsync 丢弃。
+        new("Model", "模型", "modelpool", "glm-4-flash", "统一管理全部模型：单选一个作主模型，其余勾选「回落」后按顺序在主模型失败时尝试；每条可单独测连通性"),
+        new("ApiKey", "LLM API Key", "password", "", "主模型密钥（模型池中主模型那一行；留空回落到宿主配置）"),
+        new("BaseUrl", "LLM Base URL", "text", "https://open.bigmodel.cn/api/paas/v4", "主模型地址（模型池中主模型那一行）"),
+        new("FallbackModels", "备用模型回落链", "models", "[]", "回落链存储，由模型池控件写入"),
         new("Personas", "人格", "personas", "[]", "可维护多套系统提示词；必须且只能启用一个"),
         new("NameKeywords", "名字唤醒关键词", "text", "科比", "逗号分隔，消息以任一关键词开头即视为被呼叫（等同被 @）"),
         new("ReplyProbability", "普通消息回复概率 %", "number", "20", "未被 @ 的群消息触发 AI 判断的概率（骰子算法：10 次均值，阈值越远离 50 越趋向必发/必不发）"),
@@ -74,6 +78,14 @@ public sealed class ChatPlugin : IBotPlugin
         // AI 对话优先级最低：命令插件（Admin/Fun）先处理，未命中的消息才进入 AI
         _subs.Add(context.Messages.OnPrivate(OnPrivateAsync, priority: 0, tag: Name));
         _subs.Add(context.Messages.OnGroup(OnGroupAsync, priority: 0, tag: Name));
+
+        // 宿主 !agent 归位到插件：注册 agent 命令(状态查询 / 中断在途回复)
+        // 之所以写在插件里而不是宿主：_agent 的上下文窗口、在途取消源都在插件内部，
+        // 宿主拿不到也不该为此反向依赖插件类型。
+        _commandSubs.Add(context.RegisterCommand(
+            "agent", "查询 AI 上下文状态 / 缓存命中率 / 额度，或中断在途回复",
+            args => Task.FromResult(HandleAgentCommand(args)),
+            "agent [status|interrupt <scope>]"));
 
         // 手动按天总结群聊（0 点到 24 点）：结果回发并追加为该群长期记忆的最新摘要段
         _commandSubs.Add(context.RegisterCommand(
@@ -121,6 +133,78 @@ public sealed class ChatPlugin : IBotPlugin
             Console.WriteLine($"[agent] 触发消息 {messageId} 已被撤回（{source}），中止回复");
         }
         return Task.CompletedTask;
+    }
+
+    // ===================== !agent 命令：状态查询 / 中断在途回复 =====================
+    // 上下文窗口、在途取消源都在 AgentService 内部，所以命令实现放在插件侧而非宿主。
+
+    /// <summary>
+    /// agent                             → 状态总览(默认)
+    /// agent status                      → 同上
+    /// agent interrupt [scope]           → 中断某会话在途回复(group:123 / user:456 / private:456)
+    /// </summary>
+    private string HandleAgentCommand(string args)
+    {
+        var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var sub = parts.Length == 0 ? "status" : parts[0].ToLowerInvariant();
+
+        switch (sub)
+        {
+            case "status" or "":
+                return FormatStatus();
+
+            case "interrupt" or "stop" or "abort":
+                if (parts.Length < 2)
+                    return "用法: agent interrupt <scope>(scope 形如 group:123 / user:456 / private:456)。\n"
+                         + $"当前在途请求数: {_agent.Inflight}";
+                var scope = parts[1];
+                var n = _agent.Interrupt(scope);
+                return n > 0
+                    ? $"已中断 {scope} 的在途生成(只中止本次回复，上下文与记忆均未变动)。"
+                    : $"会话 {scope} 当前没有在途请求(未在生成中)。当前全局在途数: {_agent.Inflight}";
+
+            default:
+                return "用法: agent status | agent interrupt <scope>\n"
+                     + "  status    查看上下文状态 / 缓存命中率 / 额度用量\n"
+                     + "  interrupt 中断某会话正在进行的 AI 回复";
+        }
+    }
+
+    /// <summary>把运行时快照格式化为聊天可读文本</summary>
+    private string FormatStatus()
+    {
+        var (sessions, turns) = _agent.ContextStats();
+        var totals = _ctx.Usage.Totals();
+        // 已用 = 输入 + 输出。缓存命中量**不参与求和**：它是 InputTokens 的子集，
+        // 加进来等于把同一批 token 数两遍，会让额度占比虚高。命中量与命中率单独列出。
+        var used = totals.InputTokens + totals.OutputTokens;
+        var hitRate = totals.InputTokens > 0 ? (double)totals.CachedTokens / totals.InputTokens : 0d;
+
+        // QuotaTokens 是 number 类型设置：前端提交的是 JSON 数字，必须按 long 读。
+        // 若用 GetSetting<string>，JsonElement.GetString() 对 Number 会抛异常并被 GetSetting 内部 catch 吞掉，
+        // 表现为"额度配了却永远显示未配置"。
+        var quota = _ctx.GetSetting<long>("QuotaTokens", 0L);
+
+        var model = _ctx.GetSetting("Model", _ctx.Config.Model);
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("【Agent 状态】");
+        sb.AppendLine($"模型: {model}");
+        sb.AppendLine($"上下文: {sessions} 个会话 / {turns} 条消息(内存窗口)");
+        sb.AppendLine($"在途请求: {_agent.Inflight}");
+        sb.AppendLine("— 用量 —");
+        sb.AppendLine($"调用次数: {totals.Calls}，已用 token: {used}(输入 {totals.InputTokens} / 输出 {totals.OutputTokens})");
+        sb.AppendLine($"缓存命中: {totals.CachedTokens} token，命中率 {hitRate:P1}");
+        if (quota > 0)
+        {
+            var left = quota - used;
+            var pct = (double)used / quota * 100d;
+            sb.AppendLine($"额度: {used}/{quota}(已用 {pct:F1}%，剩余 {left} token)");
+        }
+        else
+        {
+            sb.AppendLine("额度: 未配置(插件设置 QuotaTokens 填总额上限即可显示占比)");
+        }
+        return sb.ToString().TrimEnd();
     }
 
     public Task OnUnloadAsync()

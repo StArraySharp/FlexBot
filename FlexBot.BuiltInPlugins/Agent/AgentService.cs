@@ -53,11 +53,20 @@ class AgentService
     // 会话重置频控：key → 上次重置时间（防止模型反复清空上下文导致前言不搭后语）
     private readonly ConcurrentDictionary<string, DateTime> _lastReset = new(StringComparer.OrdinalIgnoreCase);
 
+    // 在途请求中断表：会话 key → 该会话当前请求的取消源。
+    // !agent interrupt 靠它中止"正在流式输出/等待模型返回"的回复；只中止本次生成，不动上下文与记忆。
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _inflightCts = new(StringComparer.OrdinalIgnoreCase);
+
     // 记忆文件缓存：key → (最后修改时间, 最近一段摘要)，避免每次 @ 都读整个文件
     private readonly ConcurrentDictionary<string, (DateTime Mtime, string? Summary)> _memCache = new(StringComparer.OrdinalIgnoreCase);
 
     // 在途 AI 请求数（卸载时等待归零，避免 ALC 回收后 async 延续跳入已释放代码段）
     private int _inflight;
+
+    // 读插件设置里的 JSON 必须走这套选项：前端写入的是 camelCase（{baseUrl,model,apiKey}、
+    // {name,enabled,file}），而 System.Text.Json 默认**大小写敏感** —— 用默认选项会让字段静默变 null。
+    // 实测后果：备用模型回落链与人格配置都读不到值，功能等于从未生效。
+    private static readonly JsonSerializerOptions SettingJson = BotJson.Setting;
 
 
     public AgentService(IBotContext ctx, BotTools tools)
@@ -93,7 +102,7 @@ class AgentService
     {
         try
         {
-            var arr = JsonSerializer.Deserialize<List<PersonaEntry>>(_ctx.GetSetting("Personas", "[]") ?? "[]") ?? [];
+            var arr = JsonSerializer.Deserialize<List<PersonaEntry>>(_ctx.GetSetting("Personas", "[]") ?? "[]", SettingJson) ?? [];
             if (arr.Count == 0) return "";
             var active = arr.FirstOrDefault(p => p.Enabled) ?? arr[0];
             if (active is null) return "";
@@ -143,7 +152,7 @@ class AgentService
     {
         try
         {
-            var arr = JsonSerializer.Deserialize<List<PersonaEntry>>(_ctx.GetSetting("Personas", "[]") ?? "[]") ?? [];
+            var arr = JsonSerializer.Deserialize<List<PersonaEntry>>(_ctx.GetSetting("Personas", "[]") ?? "[]", SettingJson) ?? [];
             Console.WriteLine($"[agent] 人格元数据已更新（{arr.Count} 项）");
         }
         catch { /* 元数据回写失败不致命 */ }
@@ -200,6 +209,70 @@ class AgentService
         return $"已重置本会话的短期上下文（清掉 {cleared} 条）。长期记忆与历史消息都保留了 —— 需要时我可以从历史库把之前的对话补回来。";
     }
 
+    /// <summary>
+    /// 中断某会话**在途**的 AI 回复：取消正在流式输出/等待模型返回的请求。
+    /// 只中止本次生成，不清上下文、不动记忆、不删数据。返回实际中止的请求数(当前会话在途则为 1)。
+    /// scope 形如 group:123 / user:456 / private:456；解析失败返回 0。
+    /// </summary>
+    public int Interrupt(string scope)
+    {
+        var key = NormalizeKey(scope);
+        if (key is null) return 0;
+        if (_inflightCts.TryGetValue(key, out var cts))
+        {
+            try
+            {
+                cts.Cancel();
+                Console.WriteLine($"[ai] 会话中断 {key}：已取消在途生成");
+                return 1;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ai] 会话中断失败 {key}: {ex.Message}");
+                return 0;
+            }
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// 把 scope(group:123 / user:456 / private:456)规整为内存窗口 key(group123 / user456)。
+    /// 无法解析返回 null —— 调用方据此回"无法识别的会话"，而不是猜一个 key。
+    /// </summary>
+    private static string? NormalizeKey(string scope)
+    {
+        var s = (scope ?? "").Trim();
+        if (s.StartsWith("group:", StringComparison.OrdinalIgnoreCase))
+        {
+            var body = s[6..].Trim();
+            return long.TryParse(body, out var gid) && gid > 0 ? "group" + gid : null;
+        }
+        // user: 与 private: 都是私聊，统一映射到 user<uin>
+        var prefix = s.StartsWith("user:", StringComparison.OrdinalIgnoreCase) ? "user:"
+                   : s.StartsWith("private:", StringComparison.OrdinalIgnoreCase) ? "private:"
+                   : null;
+        if (prefix is null) return null;
+        var uinText = s[prefix.Length..].Trim();
+        return long.TryParse(uinText, out var uin) && uin > 0 ? "user" + uin : null;
+    }
+
+    /// <summary>当前在途请求数(全部会话)</summary>
+    public int Inflight => Interlocked.CompareExchange(ref _inflight, 0, 0);
+
+    /// <summary>内存里持有短期上下文的会话数与累计轮次(供 !agent 查询)</summary>
+    public (int Sessions, int Turns) ContextStats()
+    {
+        var sessions = 0;
+        var turns = 0;
+        foreach (var kv in _convHist)
+        {
+            int n;
+            lock (kv.Value) n = kv.Value.Count;
+            if (n > 0) { sessions++; turns += n; }
+        }
+        return (sessions, turns);
+    }
+
     public async Task<string> AskAgentAsync(string prompt, long callerUin, string callerName, long groupId = 0, string extraContext = "", List<AIContent>? imageParts = null)
         => await AskAgentAsync(prompt, callerUin, callerName, groupId, extraContext, imageParts, null);
 
@@ -216,6 +289,9 @@ class AgentService
         var convLock = _convLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await convLock.WaitAsync();
         Interlocked.Increment(ref _inflight);
+        // 登记本会话的在途取消源：!agent interrupt 据此中止本次生成
+        var cts = new CancellationTokenSource();
+        _inflightCts[key] = cts;
         // 本轮上下文（AsyncLocal）：身份/群号随 await 链流入本轮的工具调用，各轮相互隔离
         CurrentTurn.Value = new TurnContext { CallerUin = callerUin, CallerName = callerName, GroupId = groupId };
         try
@@ -282,17 +358,16 @@ class AgentService
             string answer;
             if (onStream is not null)
             {
-                (resp, answer) = await RunStreamingWithFallbackAsync(messages, onStream);
+                (resp, answer) = await RunStreamingWithFallbackAsync(messages, onStream, cts.Token);
             }
             else
             {
-                var (r0, _) = await RunWithFallbackAsync(messages);
+                var (r0, _) = await RunWithFallbackAsync(messages, cts.Token);
                 resp = r0;
                 answer = resp.Text?.Trim() ?? resp.ToString() ?? "";
             }
             answer = ChatUtils.TrimToMaxChars(answer, 2000);
             Console.WriteLine($"[ai] answer: {answer}");
-            if (resp is not null) _ = Task.Run(() => PrintDebugInfo(resp));
 
             // 兜底：本次对话中产生了新截图，且用户请求与截图/看图相关，而 AI 未主动发图 → 自动发送
             var wantsImage = Regex.IsMatch(prompt, @"(截图|截屏|图|看(一?看|下)?屏|屏幕|发我|发给我)", RegexOptions.IgnoreCase);
@@ -337,6 +412,10 @@ class AgentService
         finally
         {
             Interlocked.Decrement(ref _inflight);
+            // 注销在途取消源：仅当登记的仍是自己时移除(防串台)，随后释放
+            if (_inflightCts.TryGetValue(key, out var mine) && ReferenceEquals(mine, cts))
+                _inflightCts.TryRemove(key, out _);
+            try { cts.Dispose(); } catch { }
             // 清空本轮上下文：这一步是并发隔离的关键（AsyncLocal 留残留会被后续调用读到）
             CurrentTurn.Value = null;
             convLock.Release();
@@ -372,7 +451,7 @@ class AgentService
 
     // 流式主路径：遍历 AgentResponseUpdate，文本增量与工具调用实时回调；失败回落非流式链
     private async Task<(AgentResponse? Resp, string Answer)> RunStreamingWithFallbackAsync(
-        List<MCAIChatMessage> messages, StreamEvent onStream)
+        List<MCAIChatMessage> messages, StreamEvent onStream, CancellationToken ct = default)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();   // 本次调用的耗时（用量统计用）
         UsageDetails? usage = null;
@@ -381,7 +460,7 @@ class AgentService
         AgentResponse? resp = null;
         try
         {
-            await foreach (var update in _agent.RunStreamingAsync(messages))
+            await foreach (var update in _agent.RunStreamingAsync(messages, cancellationToken: ct))
             {
                 // 工具调用上报（函数名+参数前 120 字符）
                 foreach (var call in update.Contents.OfType<FunctionCallContent>())
@@ -427,7 +506,7 @@ class AgentService
         }
         // 回落：非流式完整链（结果只做返回，不再回调，避免与已推送内容重复）
         var fallbackSw = System.Diagnostics.Stopwatch.StartNew();
-        var (r2, _) = await RunWithFallbackAsync(messages);
+        var (r2, _) = await RunWithFallbackAsync(messages, ct);
         RecordUsage(r2?.Usage, fallbackSw);
         return (r2, r2.Text?.Trim() ?? "");
     }
@@ -440,11 +519,19 @@ class AgentService
         var result = new List<ModelEndpoint>();
         try
         {
-            var arr = JsonSerializer.Deserialize<List<FbEntry>>(_ctx.GetSetting("FallbackModels", "[]") ?? "[]") ?? [];
+            var arr = JsonSerializer.Deserialize<List<FbEntry>>(_ctx.GetSetting("FallbackModels", "[]") ?? "[]", SettingJson) ?? [];
             var mainKey = _ctx.GetSetting("ApiKey", _cfg.ApiKey);
+            var mainBase = _ctx.GetSetting("BaseUrl", _cfg.BaseUrl);
             foreach (var f in arr)
-                if (!string.IsNullOrWhiteSpace(f.BaseUrl) && !string.IsNullOrWhiteSpace(f.Model))
-                    result.Add(new ModelEndpoint(string.IsNullOrWhiteSpace(f.ApiKey) ? mainKey : f.ApiKey!, f.BaseUrl!, f.Model!));
+            {
+                // 未勾选的条目不参与回落。Enabled 可空：旧配置没有该字段，视为启用(不破坏既有配置)
+                if (!(f.Enabled ?? true)) continue;
+                if (string.IsNullOrWhiteSpace(f.Model)) continue;
+                // BaseUrl 留空 = 沿用主模型地址（同一服务商换个模型名是最常见的回落配置）
+                var baseUrl = string.IsNullOrWhiteSpace(f.BaseUrl) ? mainBase : f.BaseUrl!;
+                if (string.IsNullOrWhiteSpace(baseUrl)) continue;
+                result.Add(new ModelEndpoint(string.IsNullOrWhiteSpace(f.ApiKey) ? mainKey : f.ApiKey!, baseUrl, f.Model!));
+            }
         }
         catch (Exception ex) { Console.WriteLine($"[agent] 解析 FallbackModels 失败: {ex.Message}"); }
         return result;
@@ -452,12 +539,14 @@ class AgentService
 
     private sealed class FbEntry
     {
+        // 是否参与回落。可空：旧配置无此字段，解析后为 null，按"启用"处理
+        public bool? Enabled { get; set; }
         public string? BaseUrl { get; set; }
         public string? Model { get; set; }
         public string? ApiKey { get; set; }
     }
 
-    private async Task<(AgentResponse Resp, bool DroppedImages)> RunWithFallbackAsync(List<MCAIChatMessage> messages)
+    private async Task<(AgentResponse Resp, bool DroppedImages)> RunWithFallbackAsync(List<MCAIChatMessage> messages, CancellationToken ct = default)
     {
         Exception? last = null;
         AgentResponse? resp = null;
@@ -465,7 +554,7 @@ class AgentService
         var model = _ctx.GetSetting("Model", _cfg.Model);
 
         // 主模型（带图）
-        try { resp = await _agent.RunAsync(messages); }
+        try { resp = await _agent.RunAsync(messages, cancellationToken: ct); }
         catch (Exception ex)
         {
             last = ex;
@@ -479,7 +568,7 @@ class AgentService
             {
                 var slim = BuildSlimContext(messages);
                 Console.WriteLine($"[ai] 命中内容审查，精简上下文重试（丢历史，仅保留最近消息）");
-                resp = await _agent.RunAsync(slim);
+                resp = await _agent.RunAsync(slim, cancellationToken: ct);
             }
             catch (Exception ex)
             {
@@ -495,7 +584,7 @@ class AgentService
             {
                 var noImg = StripImages(messages);
                 Console.WriteLine($"[ai] 主模型去图重试（原请求带图）");
-                resp = await _agent.RunAsync(noImg);
+                resp = await _agent.RunAsync(noImg, cancellationToken: ct);
                 droppedImages = true;
             }
             catch (Exception ex)
@@ -519,7 +608,7 @@ class AgentService
                             new OpenAIClientOptions { Endpoint = new Uri(fb.BaseUrl) })
                         .GetChatClient(fb.Model)
                         .AsAIAgent(instructions: _instructions, name: "Kobe", tools: _tools.CreateAll());
-                    resp = await client.RunAsync(messages);
+                    resp = await client.RunAsync(messages, cancellationToken: ct);
                     Console.WriteLine($"[ai] 备用模型 {fb.Model} 成功");
                     break;
                 }
@@ -538,7 +627,7 @@ class AgentService
                                 .GetChatClient(fb.Model)
                                 .AsAIAgent(instructions: _instructions, name: "Kobe", tools: _tools.CreateAll());
                             Console.WriteLine($"[ai] 备用模型 {fb.Model} 去图重试");
-                            resp = await client2.RunAsync(StripImages(messages));
+                            resp = await client2.RunAsync(StripImages(messages), cancellationToken: ct);
                             droppedImages = true;
                             Console.WriteLine($"[ai] 备用模型 {fb.Model} 去图重试成功");
                             break;
@@ -613,42 +702,6 @@ class AgentService
         var lastSection = memText.Length > 0 ? memText.Split("## ").LastOrDefault()?.Trim() : null;
         _memCache[key] = (mtime, string.IsNullOrWhiteSpace(lastSection) ? null : lastSection);
         return _memCache[key].Summary;
-    }
-
-    // 响应调试打印（后台执行，不阻塞回复）
-    private static void PrintDebugInfo(object resp)
-    {
-        try
-        {
-            foreach (var p in resp.GetType().GetProperties())
-            {
-                if (p.Name == "Text" || p.Name == "RawRepresentation") continue;
-                try
-                {
-                    var v = p.GetValue(resp);
-                    if (v is null) continue;
-                    var s = JsonSerializer.Serialize(v, v.GetType(), BotJson.Compact);
-                    if (s.Length > 2000) s = s[..2000] + "…";
-                    Console.WriteLine($"[ai] resp.{p.Name}: {s}");
-                }
-                catch { }
-            }
-            try
-            {
-                var raw = resp.GetType().GetProperty("RawRepresentation")?.GetValue(resp);
-                if (raw is not null)
-                {
-                    var rawStr = JsonSerializer.Serialize(raw, raw.GetType(), BotJson.Compact);
-                    var hasB64Img = rawStr.Contains("base64,") || rawStr.Contains("iVBOR");
-                    if (hasB64Img)
-                        Console.WriteLine($"[ai] resp.RawRepresentation: (含 base64 图片，长度 {rawStr.Length}，跳过)");
-                    else if (rawStr.Length > 2000) Console.WriteLine($"[ai] resp.RawRepresentation: {rawStr[..2000]}…");
-                    else Console.WriteLine($"[ai] resp.RawRepresentation: {rawStr}");
-                }
-            }
-            catch { }
-        }
-        catch (Exception ex) { Console.WriteLine($"[ai] 响应调试信息解析失败: {ex.Message}"); }
     }
 
     // 手动按天总结：拉取指定群某日 0 点到 24 点的全部历史，交给总结模型，产出 Markdown
