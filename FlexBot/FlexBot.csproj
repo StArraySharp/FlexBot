@@ -15,6 +15,8 @@
   <ItemGroup>
     <!-- 窗口图标是运行时读取的（PhotinoGui.SetIconFile），ApplicationIcon 只管 exe 资源，故需一并输出 -->
     <Content Include="Assets\flexbot.ico" CopyToOutputDirectory="PreserveNewest" />
+    <!-- AppIndicator 只认 PNG/SVG，不认 ICO（托盘图标用这一份） -->
+    <Content Include="Assets\flexbot.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

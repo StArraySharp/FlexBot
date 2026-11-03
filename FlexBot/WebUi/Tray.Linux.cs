@@ -36,6 +36,7 @@ static class TrayLinux
     private static IndMenuFn? _indMenu;
     private static IndIconFn? _indIcon;
     private static IndTitleFn? _indTitle;
+    private static IndThemePathFn? _indThemePath;
 
     private delegate int DeleteFn(IntPtr widget, IntPtr evt, IntPtr data);
     private delegate void ActivateFn(IntPtr item, IntPtr data);
@@ -44,6 +45,7 @@ static class TrayLinux
     private delegate void IndMenuFn(IntPtr ind, IntPtr menu);
     private delegate void IndIconFn(IntPtr ind, string icon, string desc);
     private delegate void IndTitleFn(IntPtr ind, string title);
+    private delegate void IndThemePathFn(IntPtr ind, string path);
     private delegate uint SignalConnectFn(IntPtr instance, string signal, IntPtr handler, IntPtr data, IntPtr destroy, int flags);
     private delegate void W1Fn(IntPtr a);
     private delegate IntPtr MenuNewFn();
@@ -94,6 +96,7 @@ static class TrayLinux
         _indMenu = Bind<IndMenuFn>(indLib, "app_indicator_set_menu");
         _indIcon = Bind<IndIconFn>(indLib, "app_indicator_set_icon_full");
         _indTitle = Bind<IndTitleFn>(indLib, "app_indicator_set_title");
+        _indThemePath = Bind<IndThemePathFn>(indLib, "app_indicator_set_icon_theme_path");
         if (_indNew is null || _indStatus is null || _indMenu is null)
         {
             reason = "AppIndicator 符号缺失";
@@ -116,8 +119,12 @@ static class TrayLinux
         _indicator = _indNew("flexbot", "application-x-executable", CategoryApplicationStatus);
         if (_indicator == IntPtr.Zero) { reason = "app_indicator_new 返回空"; return false; }
 
-        var ico = Path.Combine(AppContext.BaseDirectory, "Assets", "flexbot.ico");
-        _indIcon?.Invoke(_indicator, File.Exists(ico) ? ico : "application-x-executable", tooltip);
+        // KDE/GNOME 的 StatusNotifier 只按**图标主题名**解析：直接给绝对路径会显示空白（实测托盘无图标）。
+        // 正确做法：先把 Assets 目录注册成临时主题路径，再用主题名 flexbot 指向 flexbot.png。
+        var assets = Path.Combine(AppContext.BaseDirectory, "Assets");
+        var png = Path.Combine(assets, "flexbot.png");
+        _indThemePath?.Invoke(_indicator, assets);
+        _indIcon?.Invoke(_indicator, File.Exists(png) ? "flexbot" : "application-x-executable", tooltip);
         _indTitle?.Invoke(_indicator, tooltip);
 
         _activate = OnActivate;

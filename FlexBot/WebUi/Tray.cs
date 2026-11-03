@@ -17,9 +17,6 @@ namespace FlexBot.WebUi;
 /// </summary>
 static class Tray
 {
-    /// <summary>托盘是否已装好（决定关窗是"收进托盘"还是"退出"）。</summary>
-    public static bool Active { get; private set; }
-
     /// <summary>用户选了"退出"：此时关闭要真的放行。</summary>
     public static bool Quitting { get; private set; }
 
@@ -48,8 +45,6 @@ static class Tray
                 reason = "未知平台";
                 ok = false;
             }
-
-            Active = ok;
             Console.WriteLine(ok
                 ? "[tray] 已启用：关窗收进托盘，单击图标恢复（右键可退出）"
                 : $"[tray] 未启用（{reason}）：关窗即退出");
@@ -57,7 +52,6 @@ static class Tray
         }
         catch (Exception ex)
         {
-            Active = false;
             Console.WriteLine($"[tray] 装载失败（{ex.GetType().Name}: {ex.Message}），保持“关窗即退出”");
             return false;
         }
