@@ -178,29 +178,192 @@ function writeHidden(row, key, list) {
 }
 function getFK(k) { return document.querySelector(`#psetForm [data-k="${k}"]`)?.value || ''; }
 
+/* ---------- 模型池（type=modelpool）：主模型 + 备用回落统一管理 ---------- */
+// 列表里每一行是一个模型；单选一个作主模型，其余勾选「回落」后按顺序在主模型失败时尝试。
+// 存储仍复用原有四个设置项（Model/BaseUrl/ApiKey 存主模型，FallbackModels 存其余），
+// 由本控件写回隐藏字段 —— 零后端改动、零配置迁移：旧配置自动成为「主模型 + 回落链」。
+
+// 把池子写回四个隐藏字段（随表单一起提交）
+function writePool(row, pool) {
+  const pri = pool.find(m => m.primary) || pool[0] || {};
+  const put = (k, v) => {
+    let el = row.querySelector(`input[data-k="${k}"]`);
+    if (!el) { el = document.createElement('input'); el.type = 'hidden'; el.dataset.k = k; row.appendChild(el); }
+    el.value = v;
+  };
+  put('Model', pri.model || '');
+  put('BaseUrl', pri.baseUrl || '');
+  put('ApiKey', pri.apiKey || '');
+  put('FallbackModels', JSON.stringify(pool.filter(m => !m.primary).map(m => ({
+    enabled: m.enabled !== false, baseUrl: m.baseUrl || '', model: m.model || '', apiKey: m.apiKey || ''
+  }))));
+}
+
+function renderModelPoolEntry(row, def, values, defs) {
+  const v = values || {};
+  // 取值语义与 settingVal 一致：键存在（含空串）就用它，缺键才回落 def.default。
+  // 否则全新安装（settings.json 不存在）会渲染成空值，一保存就把默认 BaseUrl/模型名清掉。
+  const s = k => {
+    const raw = v[k];
+    if (raw != null) return String(raw);
+    const d = (defs || []).find(x => x.key === k);
+    return d && d.default != null ? String(d.default) : '';
+  };
+  // 主模型来自 Model/BaseUrl/ApiKey，其余来自 FallbackModels
+  const pool = [{ primary: true, enabled: true, baseUrl: s('BaseUrl'), model: s('Model'), apiKey: s('ApiKey') }];
+  parseJsonArray(v.FallbackModels).forEach(f => pool.push({
+    primary: false, enabled: f.enabled !== false,
+    baseUrl: f.baseUrl || '', model: f.model || '', apiKey: f.apiKey || ''
+  }));
+  row.innerHTML = `
+    <div class="psetlbl">${plugEsc(def.label)}
+      <span class="grow"></span>
+      <button class="btn ghost small" type="button" data-mp-add>+ 添加模型</button>
+    </div>
+    <div data-mp-list style="display:flex;flex-direction:column;gap:14px"></div>
+    ${def.description ? `<div class="psetdesc">${plugEsc(def.description)}</div>` : ''}`;
+  const listEl = row.querySelector('[data-mp-list]');
+  const rerender = () => renderModelPool(listEl, pool, row);
+  row.querySelector('[data-mp-add]').onclick = () => {
+    pool.push({ primary: false, enabled: true, baseUrl: '', model: '', apiKey: '' });
+    rerender();
+  };
+  rerender();
+}
+
+function renderModelPool(container, pool, row) {
+  if (!pool.some(m => m.primary)) pool[0].primary = true;
+  container.innerHTML = pool.map((m, i) => `
+    <div class="mpitem" data-mp-i="${i}" style="border:1px solid var(--outline-var);border-radius:12px;padding:14px">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px;flex-wrap:wrap">
+        <label class="switch" title="只能有一个主模型"><input type="radio" name="mp-primary" data-mp-pri ${m.primary ? 'checked' : ''}><span class="track"><span class="thumb"></span></span>主模型</label>
+        ${m.primary
+          ? '<span class="psetdesc">主模型不参与回落</span>'
+          : `<label class="switch" title="勾选后参与回落"><input type="checkbox" data-mp-fb ${m.enabled === false ? '' : 'checked'}><span class="track"><span class="thumb"></span></span>回落</label>`}
+        <span class="grow"></span>
+        <button class="btn ghost small" type="button" data-mp-test>测试</button>
+        <button class="btn err-tonal small" type="button" data-mp-del>✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">
+        <div class="tf"><input data-mp-base value="${plugEsc(m.baseUrl || '')}" placeholder=" "><label>Base URL</label></div>
+        <div class="tf"><input data-mp-model value="${plugEsc(m.model || '')}" placeholder=" "><label>模型名</label></div>
+        <div class="tf"><input data-mp-key type="password" value="${plugEsc(m.apiKey || '')}" placeholder=" " autocomplete="off"><label>API Key</label></div>
+      </div>
+      <div class="psetdesc" data-mp-msg style="display:none"></div>
+    </div>`).join('');
+  const sync = () => {
+    container.querySelectorAll('[data-mp-i]').forEach(el => {
+      const i = +el.dataset.mpI;
+      pool[i].baseUrl = el.querySelector('[data-mp-base]').value;
+      pool[i].model = el.querySelector('[data-mp-model]').value;
+      pool[i].apiKey = el.querySelector('[data-mp-key]').value;
+      const fb = el.querySelector('[data-mp-fb]');
+      if (fb) pool[i].enabled = fb.checked;
+    });
+    writePool(row, pool);
+  };
+  container.querySelectorAll('input').forEach(inp => inp.oninput = sync);
+  // 改选主模型：被顶下来的旧主模型自动留在回落链里（勾上「回落」），不会掉出列表
+  container.querySelectorAll('[data-mp-pri]').forEach(r => r.onchange = () => {
+    const i = +r.closest('[data-mp-i]').dataset.mpI;
+    pool.forEach((m, j) => {
+      if (j === i) m.primary = true;
+      else if (m.primary) { m.primary = false; m.enabled = true; }
+    });
+    renderModelPool(container, pool, row);
+  });
+  container.querySelectorAll('[data-mp-del]').forEach(btn => btn.onclick = () => {
+    const i = +btn.closest('[data-mp-i]').dataset.mpI;
+    const wasPrimary = pool[i].primary;
+    pool.splice(i, 1);
+    if (!pool.length) pool.push({ primary: true, enabled: true, baseUrl: '', model: '', apiKey: '' });
+    else if (wasPrimary) pool[0].primary = true;   // 删掉主模型 → 顺位第一个顶上
+    renderModelPool(container, pool, row);
+  });
+  // 单条测试：走 /api/test-model。Base URL / Key 留空时沿用当前主模型的值 —— 与运行时回落语义一致
+  container.querySelectorAll('[data-mp-test]').forEach(btn => btn.onclick = async () => {
+    const el = btn.closest('[data-mp-i]');
+    const me = pool[+el.dataset.mpI];
+    const pri = pool.find(x => x.primary) || pool[0] || {};
+    const msg = el.querySelector('[data-mp-msg]');
+    const say = t => { msg.style.display = 'block'; msg.textContent = t; };
+    const baseUrl = el.querySelector('[data-mp-base]').value.trim() || (me.primary ? '' : (pri.baseUrl || '').trim());
+    const model = el.querySelector('[data-mp-model]').value.trim();
+    const apiKey = el.querySelector('[data-mp-key]').value.trim() || (me.primary ? '' : (pri.apiKey || '').trim());
+    if (!model) return say('请先填模型名');
+    if (!baseUrl) return say('请先填 Base URL（回落项可留空，会沿用主模型地址）');
+    btn.disabled = true; say('测试中…');
+    try {
+      const r = await fetch('/api/test-model', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseUrl, model, apiKey })
+      }).then(x => x.json());
+      say(r.ok ? `✓ 可用：${r.reply || '(空回复)'}` : `✗ 失败：${r.error || '未知错误'}`);
+    } catch (e) {
+      say('✗ 请求失败：' + e);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  writePool(row, pool);   // 首次渲染即写入隐藏字段，保证不改任何东西也能正确保存
+}
+
 // 备用模型卡片列表
 function renderFbList(container, list, onsync) {
   if (!list.length) { container.innerHTML = '<div class="visionhint">（空：主模型失败时直接返回错误）</div>'; return; }
   container.innerHTML = list.map((f, i) => `
-    <div class="fbrow" data-fb-i="${i}" style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end">
+    <div class="fbrow" data-fb-i="${i}" style="display:grid;grid-template-columns:auto 1fr 1fr 1fr auto auto;gap:8px;align-items:end">
+      <div class="psetdesc" data-fb-msg style="display:none;grid-column:1/-1"></div>
+      <label class="switch" style="align-self:center" title="勾选后参与回落"><input type="checkbox" data-fb-en ${f.enabled === false ? '' : 'checked'}><span class="track"><span class="thumb"></span></span></label>
       <div class="tf"><input data-fb-base value="${plugEsc(f.baseUrl || '')}" placeholder=" "><label>Base URL</label></div>
       <div class="tf"><input data-fb-model value="${plugEsc(f.model || '')}" placeholder=" "><label>模型名</label></div>
       <div class="tf"><input data-fb-key type="password" value="${plugEsc(f.apiKey || '')}" placeholder=" " autocomplete="off"><label>API Key（空=主Key）</label></div>
-      <button class="btn err-tonal small" type="button" data-fb-del style="height:48px">✕</button>
+        <button class="btn ghost small" type="button" data-fb-test style="height:48px">测试</button>
+        <button class="btn err-tonal small" type="button" data-fb-del style="height:48px">✕</button>
     </div>`).join('');
   const sync = () => {
     container.querySelectorAll('[data-fb-i]').forEach(el => {
       const i = +el.dataset.fbI;
+      list[i].enabled = el.querySelector('[data-fb-en]').checked;
       list[i].baseUrl = el.querySelector('[data-fb-base]').value;
       list[i].model = el.querySelector('[data-fb-model]').value;
       list[i].apiKey = el.querySelector('[data-fb-key]').value;
     });
     onsync();
   };
+  // 勾选/取消：立即同步，并把停用的行压暗，一眼看出哪条不参与回落
+  container.querySelectorAll('[data-fb-en]').forEach(cb => {
+    const item = cb.closest('[data-fb-i]');
+    const paint = () => { item.style.opacity = cb.checked ? '1' : '.55'; };
+    cb.onchange = () => { sync(); paint(); };
+    paint();
+  });
   container.querySelectorAll('input').forEach(inp => inp.oninput = sync);
   container.querySelectorAll('[data-fb-del]').forEach(btn => btn.onclick = () => {
     list.splice(+btn.closest('[data-fb-i]').dataset.fbI, 1);
     renderFbList(container, list, onsync); onsync();
+  });
+  // 单条连通性测试：走 /api/test-model（后端已具备；apiKey 留空时后端回落主 Key）
+  container.querySelectorAll('[data-fb-test]').forEach(btn => btn.onclick = async () => {
+    const el = btn.closest('[data-fb-i]');
+    const msg = el.querySelector('[data-fb-msg]');
+    const baseUrl = el.querySelector('[data-fb-base]').value.trim();
+    const model = el.querySelector('[data-fb-model]').value.trim();
+    const apiKey = el.querySelector('[data-fb-key]').value.trim();
+    const say = t => { msg.style.display = 'block'; msg.textContent = t; };
+    if (!baseUrl || !model) return say('请先填 Base URL 与模型名');
+    btn.disabled = true; say('测试中…');
+    try {
+      const r = await fetch('/api/test-model', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseUrl, model, apiKey })
+      }).then(x => x.json());
+      say(r.ok ? `✓ 可用：${r.reply || '(空回复)'}` : `✗ 失败：${r.error || '未知错误'}`);
+    } catch (e) {
+      say('✗ 请求失败：' + e);
+    } finally {
+      btn.disabled = false;
+    }
   });
 }
 
@@ -298,11 +461,19 @@ async function openPSettings(name) {
   const empty = !d.defs || d.defs.length === 0;
   $('psetEmpty').style.display = empty ? 'block' : 'none';
   $('psetSave').style.display = empty ? 'none' : '';
-  (d.defs || []).forEach(def => {
+  const defs = d.defs || [];
+  // 声明了模型池（type=modelpool）的插件，这三项只是它的存储位置（主模型 + 回落链），不再单独渲染。
+  // 用 hasPool 限定作用域：其它插件若有同名键，仍按各自类型正常渲染。
+  const POOL_STORAGE_KEYS = ['BaseUrl', 'ApiKey', 'FallbackModels'];
+  const hasPool = defs.some(x => x.type === 'modelpool');
+  defs.forEach(def => {
+    if (hasPool && POOL_STORAGE_KEYS.includes(def.key)) return;
     const val = settingVal(def, d.values);
     const row = document.createElement('div');
     row.className = 'psetrow';
-    if (def.type === 'bool') {
+    if (def.type === 'modelpool') {
+      renderModelPoolEntry(row, def, d.values, defs);
+    } else if (def.type === 'bool') {
       row.innerHTML = `
         <div class="psetlbl">${plugEsc(def.label)}</div>
         <div style="display:flex;align-items:center;gap:12px">
@@ -333,7 +504,7 @@ async function openPSettings(name) {
       renderFbList(row.querySelector('[data-fb-list]'), list, () => writeHidden(row, def.key, list));
       row.querySelector('[data-fb-add]').onclick = () => {
         const main = getFK('ApiKey'), mainBase = getFK('BaseUrl');
-        list.push({ baseUrl: mainBase || '', model: '', apiKey: '' });
+        list.push({ enabled: true, baseUrl: mainBase || '', model: '', apiKey: '' });
         renderFbList(row.querySelector('[data-fb-list]'), list, () => writeHidden(row, def.key, list));
         writeHidden(row, def.key, list);
       };
