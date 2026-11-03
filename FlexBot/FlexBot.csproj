@@ -8,7 +8,14 @@
     <Nullable>enable</Nullable>
     <RootNamespace>FlexBot</RootNamespace>
     <AssemblyName>FlexBot</AssemblyName>
+    <!-- exe 图标（多尺寸 16→256）。源图在 Assets/flexbot.svg -->
+    <ApplicationIcon>Assets\flexbot.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 窗口图标是运行时读取的（PhotinoGui.SetIconFile），ApplicationIcon 只管 exe 资源，故需一并输出 -->
+    <Content Include="Assets\flexbot.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- 原生应用窗口（Photino + WebView2）。仅 Windows/macOS/Linux 桌面环境使用；

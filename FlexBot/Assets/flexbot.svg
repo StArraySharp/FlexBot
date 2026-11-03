@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="FlexBot">
+  <title>FlexBot</title>
+  <!--
+    应用图标源文件。exe 图标在构建期由 FlexBot.csproj 的 ApplicationIcon 嵌入；
+    窗口图标运行时由 PhotinoGui 读取 Assets/flexbot.ico。
+
+    改动本文件后需要重新生成 flexbot.ico（多尺寸 16/24/32/48/64/128/256）：
+      1) 逐尺寸光栅化（比缩放位图清晰：每个尺寸都从矢量重渲染）
+         npm i @resvg/resvg-js
+         node -e "const{Resvg}=require('@resvg/resvg-js'),fs=require('fs');
+                  const s=fs.readFileSync('FlexBot/Assets/flexbot.svg','utf8');
+                  for(const n of [16,24,32,48,64,128,256]){
+                    fs.writeFileSync('png/icon-'+n+'.png',
+                      new Resvg(s,{fitTo:{mode:'width',value:n},font:{loadSystemFonts:false}}).render().asPng());}"
+         （font.loadSystemFonts:false 是必需的：本图无文字，而系统字体加载在部分 Windows 环境会长时间阻塞）
+      2) 组装多尺寸 ICO（Pillow）。append_images 会被 ICO 编码器采纳，因此用的是上面逐尺寸的清晰帧
+         python -c "from PIL import Image; ss=[16,24,32,48,64,128,256];
+                    im=[Image.open(f'png/icon-{s}.png').convert('RGBA') for s in ss];
+                    im[-1].save('FlexBot/Assets/flexbot.ico',format='ICO',sizes=[(s,s) for s in ss],append_images=im[:-1])"
+
+    设计：蓝色渐变圆角底板（取自应用主题 primary）+ 白色对话气泡 + 机器人天线 + 双眼。
+  -->
+  <defs>
+    <!-- 应用主题蓝：浅色主题 primary #005AC2 的加深与提亮 -->
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B57D0"/>
+      <stop offset="0.55" stop-color="#1A6CF0"/>
+      <stop offset="1" stop-color="#4C8DFF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 底板：圆角方形 -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#tile)"/>
+
+  <!-- 机器人天线 -->
+  <circle cx="256" cy="98" r="25" fill="#FFFFFF"/>
+  <rect x="245" y="116" width="22" height="42" rx="11" fill="#FFFFFF"/>
+
+  <!-- 对话气泡 + 左下尾巴（同一纯白填充，重叠部分自然融合，避免渐变接缝） -->
+  <rect x="100" y="152" width="312" height="230" rx="74" fill="#FFFFFF"/>
+  <path d="M146 352 L146 440 L250 368 Z" fill="#FFFFFF"/>
+
+  <!-- 双眼 -->
+  <circle cx="196" cy="266" r="24" fill="#0B57D0"/>
+  <circle cx="316" cy="266" r="24" fill="#0B57D0"/>
+</svg>

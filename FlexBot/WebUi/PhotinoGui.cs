@@ -34,7 +34,17 @@ static class PhotinoGui
             }
             catch { }
             var window = new PhotinoWindow()
-                .SetTitle("FlexBot 控制台")
+                .SetTitle("FlexBot 控制台");
+            // 窗口图标：读 Assets/flexbot.ico（随输出目录发布）。
+            // 图标缺失/不支持都不该影响窗口本身，因此单独包裹，不让它拖垮整个启动链。
+            try
+            {
+                var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "flexbot.ico");
+                if (File.Exists(iconPath)) window.SetIconFile(iconPath);
+                else Console.WriteLine($"[gui] 未找到窗口图标: {iconPath}");
+            }
+            catch (Exception ex) { Console.WriteLine($"[gui] 设置窗口图标失败（忽略）: {ex.Message}"); }
+            window
                 .SetUseOsDefaultSize(false)
                 .SetSize(1180, 780)
                 .Center()
