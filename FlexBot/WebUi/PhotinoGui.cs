@@ -7,6 +7,9 @@ namespace FlexBot.WebUi;
 /// 在**调用线程**（STA 主线程）上创建，不另起线程、不做任何"聪明"的包装。
 /// 参考：https://github.com/tryphotino/photino.Samples（Photino.HelloPhotino.NET/Program.cs）
 ///
+/// 托盘（见 Tray.cs）：装上托盘后"关窗"被翻译成"隐藏"，进程与 WebUI 都还在；
+/// 单击托盘图标恢复窗口，右键菜单里可以真正退出。托盘装不上时保持老行为（关窗即退出）。
+///
 /// 返回值：
 ///   true  = 窗口正常打开并被关闭（调用方按"关窗即退出"走收尾）
 ///   false = 窗口没能用（创建失败，或起来了但始终没渲染出页面）⇒ 调用方退回"控制台 + WebUI"
@@ -51,7 +54,32 @@ static class PhotinoGui
                 .SetResizable(true)
                 .Load(url);
 
-            Console.WriteLine("[gui] 原生窗口已打开（关窗即退出；后台无窗口运行请加 --no-gui）");
+            // 托盘必须等原生窗口真正创建出来才有句柄：Photino 的 WindowHandle 在初始化完成前
+            // 会抛 "The Photino window is not initialized yet"（实测过），所以挂到 WindowCreated 上。
+            // 装不上就保持"关窗即退出"，绝不因为托盘失败影响主流程。
+            var trayReady = false;
+            window.WindowCreatedHandler += (_, _) =>
+            {
+                try
+                {
+                    // Photino 的 WindowHandle 只在 Windows 提供，Linux/macOS 会抛
+                    // "WindowHandle is only supported on Windows."（实测）——
+                    // 拿不到就传 0，让各平台自己去枚举原生窗口。
+                    var handle = IntPtr.Zero;
+                    try { handle = window.WindowHandle; } catch { }
+
+                    trayReady = Tray.TryInstall(
+                        handle,
+                        "FlexBot 控制台",
+                        onOpen: () => { Tray.ShowWindow(); return Task.CompletedTask; },
+                        onQuit: () => { try { window.Close(); } catch { } });
+                }
+                catch (Exception ex) { Console.WriteLine($"[tray] 初始化异常（忽略）: {ex.Message}"); }
+
+                Console.WriteLine(trayReady
+                    ? "[gui] 原生窗口已打开（关窗收进托盘，单击托盘图标恢复；右键→退出）"
+                    : "[gui] 原生窗口已打开（关窗即退出；后台无窗口运行请加 --no-gui）");
+            };
 
             var rendered = false;
             _ = Task.Run(async () =>
@@ -62,7 +90,9 @@ static class PhotinoGui
                 try { window.Close(); } catch { }   // 尽力关掉那个空白窗口
             });
 
-            window.WaitForClose();   // 启动事件循环，阻塞到关窗
+            window.WaitForClose();   // 启动事件循环，阻塞到真正关窗（托盘模式下"隐藏"不会走到这里）
+
+            try { Tray.RemoveTray(); } catch { }   // 托盘图标不清理会残留到鼠标划过为止
 
             if (!rendered && !WebUi.HasServedPage)
                 return false;        // 没能渲染 ⇒ 让调用方退回控制台
