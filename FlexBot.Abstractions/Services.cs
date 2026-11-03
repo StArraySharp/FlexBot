@@ -19,6 +19,18 @@ public static class BotJson
     {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
+
+    /// <summary>
+    /// 读**插件设置里的 JSON** 专用（如 FallbackModels / Personas 这类由 WebUI 写入的列表）。
+    ///
+    /// 必须大小写不敏感：WebUI 写入的是 camelCase（{baseUrl,model,apiKey}、{name,enabled,file}），
+    /// 而 System.Text.Json 默认**大小写敏感** —— 用默认选项反序列化不会报错，只会把字段全变成 null，
+    /// 表现为"配置保存成功但功能完全不生效"。实测踩过：备用模型回落链与人格配置都读不到值。
+    /// </summary>
+    public static readonly JsonSerializerOptions Setting = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 }
 
 /// <summary>
